@@ -339,3 +339,19 @@ It fetches `upstream`, refuses a diverged master, fast-forwards master to upstre
 enables repository-local Git `rerere`, then rebases lean onto master. A conflict stops with
 the normal rebase state for manual resolution or abort. It never pushes and never edits remotes. A master checked out in another
 worktree stops at `git switch master`; resolve that worktree ownership before retrying.
+
+`sync.sh` brings in every upstream change, new features included. To take only bug, performance
+and security fixes, fast-forward master (`git fetch upstream master:master`), review
+`<last reviewed>..master` and `git cherry-pick -x` the fixes that reach a surface Warper keeps.
+Since 2026-11-03 lean sits on upstream `831f4fa9f` plus these picks; upstream is reviewed through
+`3dca8f995` (the skipped commits are listed in `PROGRESS.md`):
+
+| Upstream | Lean | Fix |
+| --- | --- | --- |
+| `edf27fd58` (#16622) | `c9a72fe16` | `rustls-webpki` 0.103.16 and WebPKI roots 1.0.10 (CVE-2026-111943); lockfile only. |
+| `3c5115418` (#16529) | `6bf18c9ec` | Settings → Features "Tab key behavior" no longer always reads "User defined". |
+| `5a55a2aca` (#16661) | `8fd95cb53` | A queued command waits for the final bootstrap precmd, which replaces the active block. |
+
+A later `sync.sh` rebase drops the first two by patch ID. The third was resolved against the
+skipped `3cee055a9` (#16544) and conflicts in `app/src/terminal/input_tests.rs`; master then
+already contains it, so skip it (`git rebase --skip`).
