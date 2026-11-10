@@ -79,7 +79,7 @@ use crate::terminal::model::grid::IndexRegion;
 use crate::terminal::model::index::VisibleRow;
 use crate::terminal::model::iterm_image::{ITermImage, ITermImageMetadata};
 use crate::terminal::model::secrets::ObfuscateSecrets;
-use crate::terminal::model::session::SessionInfo;
+use crate::terminal::model::session::{SessionInfo, SpawningBlock};
 use crate::terminal::shared_session::ai_agent::encode_agent_response_event;
 use crate::terminal::shared_session::{SharedSessionSource, SharedSessionStatus};
 use crate::terminal::shell::{ShellName, ShellType};
@@ -3242,7 +3242,16 @@ impl ansi::Handler for TerminalModel {
             let shell_type = ShellType::from_name(&data.shell)
                 .unwrap_or_else(|| panic!("invalid shell name: {}", data.shell));
 
-            let pending_session_info = SessionInfo::create_pending(
+            let spawning_block = (data.is_subshell || self.pending_ssh_wrapper_session.is_some())
+                .then(|| {
+                    let active_block = self.block_list().active_block();
+                    SpawningBlock {
+                        command: active_block.command_to_string(),
+                        pwd: active_block.pwd().cloned(),
+                    }
+                });
+
+            let mut pending_session_info = SessionInfo::create_pending(
                 shell_type,
                 data,
                 subshell_info,
@@ -3250,6 +3259,7 @@ impl ansi::Handler for TerminalModel {
                 self.pending_ssh_wrapper_session.take(),
                 self.block_list().active_block().session_id(),
             );
+            pending_session_info.spawning_block = spawning_block;
             self.pending_session_info = Some(pending_session_info.clone());
 
             if self.block_list().is_bootstrapped() {

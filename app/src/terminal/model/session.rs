@@ -649,6 +649,16 @@ pub struct SessionInfo {
     pub wsl_name: Option<String>,
     /// If this is a subshell or remote session, e.g. ssh, store the parent session ID here.
     pub spawning_session_id: Option<SessionId>,
+    /// The block in the parent session whose command started this subshell or SSH session.
+    pub spawning_block: Option<SpawningBlock>,
+}
+
+/// A block whose command started a subshell or SSH session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpawningBlock {
+    pub command: String,
+    /// The parent session's working directory when the command ran.
+    pub pwd: Option<String>,
 }
 
 impl SessionInfo {
@@ -716,6 +726,7 @@ impl SessionInfo {
             host_info: Default::default(),
             wsl_name: init_shell_value.wsl_name,
             spawning_session_id,
+            spawning_block: None,
         }
     }
 
@@ -850,6 +861,7 @@ impl SessionInfo {
             },
             wsl_name: bootstrapped_value.wsl_name,
             spawning_session_id: self.spawning_session_id,
+            spawning_block: self.spawning_block,
         }
     }
 
@@ -1145,6 +1157,14 @@ impl Session {
 
     pub fn subshell_info(&self) -> &Option<SubshellInitializationInfo> {
         &self.info.subshell_info
+    }
+
+    pub fn spawning_session_id(&self) -> Option<SessionId> {
+        self.info.spawning_session_id
+    }
+
+    pub fn spawning_block(&self) -> Option<&SpawningBlock> {
+        self.info.spawning_block.as_ref()
     }
 
     /// Replaces the command executor for this session. Used after a remote
@@ -1751,6 +1771,7 @@ pub mod testing {
                 host_info: Default::default(),
                 wsl_name: None,
                 spawning_session_id: None,
+                spawning_block: None,
             }
         }
 
@@ -1817,6 +1838,16 @@ pub mod testing {
                 socket_path,
                 external_control_master: false,
             };
+            self
+        }
+
+        pub fn with_spawning_session(
+            mut self,
+            spawning_session_id: impl Into<SessionId>,
+            spawning_block: SpawningBlock,
+        ) -> Self {
+            self.spawning_session_id = Some(spawning_session_id.into());
+            self.spawning_block = Some(spawning_block);
             self
         }
 

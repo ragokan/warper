@@ -794,6 +794,24 @@ lazy_static! {
 /// Interval at which the live command duration counter repaints.
 const LIVE_COMMAND_DURATION_REPAINT_INTERVAL: Duration = Duration::from_secs(1);
 
+/// How a pane split from an SSH pane reconnects to the same host and directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshSplitTarget {
+    /// The `ssh` command that started the SSH session.
+    pub command: String,
+    /// The local directory the `ssh` command ran in.
+    pub local_directory: Option<PathBuf>,
+    pub remote_directory: Option<SshSplitDirectory>,
+}
+
+/// A remote working directory, changed to only on the host and user it was read from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshSplitDirectory {
+    pub user: String,
+    pub hostname: String,
+    pub directory: String,
+}
+
 #[derive(Default)]
 pub struct ControlMasterErrorBannerState {
     /// Whether or not the control master error banner is currently visible to
@@ -2639,6 +2657,8 @@ pub struct TerminalView {
     /// Commands that should run as separate blocks after the active pending
     /// command finishes successfully.
     pending_command_queue: VecDeque<String>,
+    /// Consumed by the next SSH session that bootstraps in this pane.
+    pending_ssh_split_directory: Option<SshSplitDirectory>,
     /// When true, enter agent view after pending setup commands complete
     /// (i.e. after `PendingCommandCompleted` is emitted). Set by
     /// `pane_tree_from_template_recursive` when a tab config has both
@@ -4424,6 +4444,7 @@ impl TerminalView {
             is_login_shell_bootstrapped: false,
             awaiting_pending_command_completion: false,
             pending_command_queue: Default::default(),
+            pending_ssh_split_directory: None,
             enter_agent_view_after_pending_commands: false,
             slow_bootstrap_banner,
             is_slow_bootstrap_banner_open: false,
@@ -10091,6 +10112,118 @@ impl TerminalView {
         })
     }
 
+    /// Returns how a split from this pane reconnects to its SSH session: only when the active
+    /// session is a warpified SSH session started by an interactive `ssh` command in a local
+    /// session.
+    pub fn ssh_split_target(&self, ctx: &AppContext) -> Option<SshSplitTarget> {
+        let sessions = self.sessions.as_ref(ctx);
+        let session = sessions.get(self.active_block_session_id()?)?;
+        if !matches!(session.session_type(), SessionType::WarpifiedRemote { .. }) {
+            return None;
+        }
+        let spawning_block = session.spawning_block()?;
+        let command = spawning_block.command.trim();
+        if !matches!(
+            SshWarpifyCommand::matches(command),
+            Some(SshWarpifyCommand::Ssh)
+        ) || parse_interactive_ssh_command(command).is_none()
+        {
+            return None;
+        }
+        let parent = sessions.get(session.spawning_session_id()?)?;
+        if !matches!(parent.session_type(), SessionType::Local) {
+            return None;
+        }
+
+        let local_directory = spawning_block
+            .pwd
+            .as_deref()
+            .and_then(|pwd| parent.launch_data()?.maybe_convert_absolute_path(pwd))
+            .filter(|path| path.is_dir());
+        let remote_directory = self.pwd().map(|directory| SshSplitDirectory {
+            user: session.user().to_owned(),
+            hostname: session.hostname().to_owned(),
+            directory,
+        });
+        Some(SshSplitTarget {
+            command: command.to_owned(),
+            local_directory,
+            remote_directory,
+        })
+    }
+
+    /// Runs `target`'s `ssh` command once this pane's shell bootstraps, then changes to its
+    /// remote directory when the SSH session bootstraps.
+    pub fn reconnect_ssh_session(&mut self, target: SshSplitTarget, ctx: &mut ViewContext<Self>) {
+        self.pending_ssh_split_directory = target.remote_directory;
+        self.set_pending_command(&target.command, ctx);
+    }
+
+    fn change_to_pending_ssh_split_directory(
+        &mut self,
+        session: &Session,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        if !matches!(session.session_type(), SessionType::WarpifiedRemote { .. }) {
+            return;
+        }
+        let Some(target) = self.pending_ssh_split_directory.take() else {
+            return;
+        };
+        // A different host means the user ran another `ssh` after the reconnect failed. A
+        // non-empty input would get the command appended to what the user typed.
+        if target.user != session.user()
+            || target.hostname != session.hostname()
+            || target.directory.contains(['\n', '\r'])
+            || self.input.as_ref(ctx).has_pending_command()
+            || !self.input.as_ref(ctx).buffer_text(ctx).is_empty()
+        {
+            return;
+        }
+        let command = format!("cd {}", session.shell_family().escape(&target.directory));
+        self.execute_command_or_set_pending(&command, ctx);
+    }
+
+    /// Makes the active session a warpified SSH session (2) that `spawning_command` started from
+    /// a local session (1) in `local_directory`.
+    #[cfg(test)]
+    pub(crate) fn enter_ssh_session_for_test(
+        &mut self,
+        spawning_command: &str,
+        local_directory: &str,
+        remote_directory: &str,
+        ctx: &mut ViewContext<Self>,
+    ) {
+        use crate::terminal::model::session::{SessionInfo, SpawningBlock};
+
+        self.sessions.update(ctx, |sessions, _| {
+            let mut local = SessionInfo::new_for_test().with_id(1);
+            local.launch_data = Some(ShellLaunchData::Executable {
+                executable_path: "/bin/bash".into(),
+                shell_type: ShellType::Bash,
+            });
+            sessions.register_session_for_test(local);
+            sessions.register_session_for_test(
+                SessionInfo::new_for_test()
+                    .with_id(2)
+                    .with_session_type(BootstrapSessionType::WarpifiedRemote)
+                    .with_user("deploy".to_owned())
+                    .with_hostname("web-1".to_owned())
+                    .with_spawning_session(
+                        1,
+                        SpawningBlock {
+                            command: spawning_command.to_owned(),
+                            pwd: Some(local_directory.to_owned()),
+                        },
+                    ),
+            );
+        });
+        self.active_block_metadata = Some(BlockMetadata::new(
+            Some(SessionId::from(2)),
+            Some(remote_directory.to_owned()),
+        ));
+    }
+
     pub fn set_pending_command_queue(
         &mut self,
         commands: Vec<String>,
@@ -14538,6 +14671,8 @@ impl TerminalView {
         if let Some(env_var_collection) = self.pending_env_var_collection.take() {
             self.invoke_environment_variables(env_var_collection, false, ctx);
         }
+
+        self.change_to_pending_ssh_split_directory(&session, ctx);
 
         // If this is a new local session, update the PATH used for MCP command execution.
         if let Some(path) = Self::local_session_path(&session) {

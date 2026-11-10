@@ -884,6 +884,53 @@ fn test_pane_focus_on_close() {
 }
 
 #[test]
+fn splitting_an_ssh_pane_reruns_its_ssh_command_only_in_lean() {
+    App::test((), |mut app| async move {
+        initialize_app(&mut app);
+        let pane_group = mock_pane_group(&mut app, Default::default());
+
+        pane_group.update(&mut app, |panes, ctx| {
+            let ssh_pane_id = get_newly_created_pane_id(panes, &[]);
+            panes
+                .terminal_view_from_pane_id(ssh_pane_id, ctx)
+                .unwrap()
+                .update(ctx, |view, ctx| {
+                    view.enter_ssh_session_for_test("ssh deploy@web-1", "/", "/srv/app", ctx)
+                });
+
+            // The terminal's split binding (Cmd+D).
+            panes.insert_terminal_pane(Direction::Right, ssh_pane_id, None, ctx);
+            let split_pane_id = get_newly_created_pane_id(panes, &[ssh_pane_id]);
+
+            // The pane group's split binding and the app menu.
+            panes.focus_pane_by_id(ssh_pane_id, ctx);
+            panes.handle_action(&PaneGroupAction::Add(Direction::Down), ctx);
+            let added_pane_id = get_newly_created_pane_id(panes, &[ssh_pane_id, split_pane_id]);
+
+            // A shell picked from the split menu starts a local session.
+            panes.insert_terminal_pane(
+                Direction::Up,
+                ssh_pane_id,
+                Some(AvailableShell::default()),
+                ctx,
+            );
+            let picked_shell_pane_id =
+                get_newly_created_pane_id(panes, &[ssh_pane_id, split_pane_id, added_pane_id]);
+
+            let pending_command = |pane_id: PaneId| {
+                let view = panes.terminal_view_from_pane_id(pane_id, ctx).unwrap();
+                let input = view.as_ref(ctx).input().as_ref(ctx);
+                input.has_pending_command().then(|| input.buffer_text(ctx))
+            };
+            let expected = cfg!(feature = "lean").then(|| "ssh deploy@web-1".to_owned());
+            assert_eq!(pending_command(split_pane_id), expected);
+            assert_eq!(pending_command(added_pane_id), expected);
+            assert_eq!(pending_command(picked_shell_pane_id), None);
+        });
+    });
+}
+
+#[test]
 fn test_insert_hidden_child_agent_pane_keeps_focus_and_active_session() {
     App::test((), |mut app| async move {
         initialize_app(&mut app);

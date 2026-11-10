@@ -2409,3 +2409,56 @@ fn cloud_mode_setup_phase_ended_does_not_emit_when_not_sharing() {
     let events: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
     assert!(events.is_empty());
 }
+
+#[test]
+fn ssh_wrapper_session_records_the_block_that_started_it() {
+    let mut terminal = TerminalModel::mock(None, None);
+    command_finished_and_precmd(&mut terminal);
+    command_finished_and_precmd(&mut terminal);
+    terminal.bootstrapped(BootstrappedValue {
+        shell: "bash".to_owned(),
+        ..Default::default()
+    });
+    let completion_metadata = CompletionMetadata {
+        exit_code: ExitCode::from(0),
+        next_block_id: BlockId::new(),
+    };
+    terminal.command_finished(CommandFinishedValue {
+        completion_metadata: completion_metadata.clone(),
+        session_id: None,
+    });
+    terminal.precmd_with_completion_metadata(PrecmdValue {
+        completion_metadata,
+        prompt_metadata: PromptMetadata {
+            pwd: Some("/home/me/infra".to_owned()),
+            ..Default::default()
+        },
+    });
+    assert!(terminal.is_active_block_bootstrapped());
+
+    terminal.simulate_long_running_block("ssh deploy@web-1", "");
+    terminal.ssh(SSHValue {
+        remote_shell: "bash".to_owned(),
+        remote_session_id: Some(7),
+        ..Default::default()
+    });
+    terminal.init_shell(InitShellValue {
+        shell: "bash".into(),
+        user: "deploy".to_owned(),
+        hostname: "web-1".to_owned(),
+        session_id: 7.into(),
+        ..Default::default()
+    });
+
+    let pending_session_info = terminal
+        .pending_session_info
+        .as_ref()
+        .expect("the SSH session should be pending bootstrap");
+    assert_eq!(
+        pending_session_info.spawning_block,
+        Some(SpawningBlock {
+            command: "ssh deploy@web-1".to_owned(),
+            pwd: Some("/home/me/infra".to_owned()),
+        })
+    );
+}

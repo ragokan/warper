@@ -152,7 +152,7 @@ use crate::terminal::view::load_ai_conversation::{
 use crate::terminal::view::ssh_file_upload::FileUploadId;
 use crate::terminal::view::{
     BlockNotification, ConversationRestorationInNewPaneType, ExecuteCommandEvent,
-    LeftPanelTargetView, SyncEvent, TerminalViewState,
+    LeftPanelTargetView, SshSplitTarget, SyncEvent, TerminalViewState,
 };
 use crate::terminal::{
     MockTerminalManager, ShareBlockModal, ShareBlockModalEvent, ShellLaunchData, ShellLaunchState,
@@ -3966,15 +3966,73 @@ impl PaneGroup {
         let base_session_id = base_pane_id
             .as_terminal_pane_id()
             .or(self.active_session_id(ctx));
-        let new_pane_id = self.add_session(
+        // A shell picked from the split menu asks for a local session.
+        let ssh_split_target = chosen_shell
+            .is_none()
+            .then(|| self.ssh_split_target(base_session_id, ctx))
+            .flatten();
+        let new_pane_id = match ssh_split_target {
+            Some(target) => self.add_ssh_session(
+                direction,
+                base_pane_id,
+                base_session_id,
+                chosen_shell,
+                target,
+                ctx,
+            ),
+            None => self.add_session(
+                direction,
+                Some(base_pane_id),
+                base_session_id,
+                chosen_shell,
+                None, /* conversation_restoration */
+                ctx,
+            ),
+        };
+        ctx.emit(Event::AppStateChanged);
+        new_pane_id
+    }
+
+    /// Under lean, a split from a pane in an SSH session reconnects to that SSH session.
+    fn ssh_split_target(
+        &self,
+        base_session_id: Option<TerminalPaneId>,
+        ctx: &AppContext,
+    ) -> Option<SshSplitTarget> {
+        if !cfg!(feature = "lean") {
+            return None;
+        }
+        self.terminal_view_from_pane_id(base_session_id?, ctx)?
+            .as_ref(ctx)
+            .ssh_split_target(ctx)
+    }
+
+    /// Adds a terminal pane that runs `target`'s `ssh` command from the local directory it ran in.
+    fn add_ssh_session(
+        &mut self,
+        direction: Direction,
+        base_pane_id: PaneId,
+        base_session_id: Option<TerminalPaneId>,
+        chosen_shell: Option<AvailableShell>,
+        target: SshSplitTarget,
+        ctx: &mut ViewContext<Self>,
+    ) -> TerminalPaneId {
+        let startup_directory = target
+            .local_directory
+            .clone()
+            .or_else(|| self.startup_path_for_new_session(base_session_id, ctx));
+        let new_pane_id = self.add_session_in_directory(
             direction,
             Some(base_pane_id),
-            base_session_id,
             chosen_shell,
+            startup_directory,
             None, /* conversation_restoration */
+            DefaultSessionModeBehavior::Ignore,
             ctx,
         );
-        ctx.emit(Event::AppStateChanged);
+        if let Some(view) = self.terminal_view_from_pane_id(new_pane_id, ctx) {
+            view.update(ctx, |view, ctx| view.reconnect_ssh_session(target, ctx));
+        }
         new_pane_id
     }
 
@@ -8221,7 +8279,24 @@ impl TypedActionView for PaneGroup {
                         _ => None,
                     }
                 };
-                self.add_terminal_pane(*direction, chosen_shell, ctx);
+                let active_session_id = self.active_session_id(ctx);
+                match self.ssh_split_target(active_session_id, ctx) {
+                    Some(target) => {
+                        let focused_pane_id = self.focused_pane_id(ctx);
+                        self.add_ssh_session(
+                            *direction,
+                            focused_pane_id,
+                            active_session_id,
+                            chosen_shell,
+                            target,
+                            ctx,
+                        );
+                        ctx.emit(Event::AppStateChanged);
+                    }
+                    None => {
+                        self.add_terminal_pane(*direction, chosen_shell, ctx);
+                    }
+                }
             }
             Remove(view_id) => self.close_pane_with_confirmation(*view_id, ctx),
             RemoveActive => self.close_active_pane_with_confirmation(ctx),

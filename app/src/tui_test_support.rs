@@ -183,6 +183,7 @@ pub fn add_tui_history_test_models(
             host_info: HostInfo::default(),
             wsl_name: None,
             spawning_session_id: None,
+            spawning_block: None,
         },
         Arc::new(NoOpCommandExecutor::default()),
     ));

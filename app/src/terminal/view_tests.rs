@@ -76,6 +76,7 @@ use crate::terminal::model::ansi::{self, BootstrappedValue, InitShellValue, Pree
 use crate::terminal::model::block::AgentViewVisibility;
 use crate::terminal::model::blocks::{TotalIndex, insert_block};
 use crate::terminal::model::grid::Dimensions as _;
+use crate::terminal::model::session::{SessionInfo, SpawningBlock};
 use crate::terminal::model::terminal_model::WithinBlock;
 use crate::terminal::session_settings::AgentToolbarChipSelection;
 use crate::terminal::shared_session::shared_handlers::{
@@ -11189,5 +11190,147 @@ fn visible_bootstrap_block_leaves_focus_on_tab_group_rename_editor() {
         assert!(workspace.read(&app, |workspace, ctx| {
             workspace.is_inline_rename_editor_focused(ctx)
         }));
+    });
+}
+
+#[test]
+fn ssh_split_target_reruns_the_ssh_command_that_started_the_session() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+        let local_directory = std::env::temp_dir();
+        let local_directory_str = local_directory.to_str().unwrap().to_owned();
+
+        terminal.update(&mut app, |view, ctx| {
+            view.enter_ssh_session_for_test(
+                "ssh -p 2222 deploy@web-1",
+                &local_directory_str,
+                "/srv/app",
+                ctx,
+            );
+            assert_eq!(
+                view.ssh_split_target(ctx),
+                Some(SshSplitTarget {
+                    command: "ssh -p 2222 deploy@web-1".to_owned(),
+                    local_directory: Some(local_directory.clone()),
+                    remote_directory: Some(SshSplitDirectory {
+                        user: "deploy".to_owned(),
+                        hostname: "web-1".to_owned(),
+                        directory: "/srv/app".to_owned(),
+                    }),
+                })
+            );
+
+            // A local directory that no longer exists leaves the new pane's directory to the caller.
+            view.enter_ssh_session_for_test("ssh web-1", "/no/such/directory", "/srv/app", ctx);
+            assert_eq!(
+                view.ssh_split_target(ctx)
+                    .map(|target| target.local_directory),
+                Some(None)
+            );
+        });
+    });
+}
+
+#[test]
+fn ssh_split_target_requires_an_interactive_ssh_command() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            for command in [
+                "ssh web-1 uptime",
+                "ssh -T web-1",
+                "gcloud compute ssh vm-1",
+                "mosh web-1",
+                "docker exec -it app bash",
+            ] {
+                view.enter_ssh_session_for_test(command, "/", "/srv/app", ctx);
+                assert_eq!(view.ssh_split_target(ctx), None, "{command}");
+            }
+
+            // A local active session, e.g. after the SSH session exited.
+            view.active_block_metadata = Some(BlockMetadata::new(
+                Some(SessionId::from(1)),
+                Some("/".to_owned()),
+            ));
+            assert_eq!(view.ssh_split_target(ctx), None);
+        });
+    });
+}
+
+#[test]
+fn ssh_split_target_skips_ssh_started_from_a_remote_session() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            view.enter_ssh_session_for_test("ssh web-1", "/", "/srv/app", ctx);
+            // Session 3 is a second hop, started by `ssh db-1` inside session 2.
+            view.sessions.update(ctx, |sessions, _| {
+                sessions.register_session_for_test(
+                    SessionInfo::new_for_test()
+                        .with_id(3)
+                        .with_session_type(BootstrapSessionType::WarpifiedRemote)
+                        .with_spawning_session(
+                            2,
+                            SpawningBlock {
+                                command: "ssh db-1".to_owned(),
+                                pwd: Some("/srv/app".to_owned()),
+                            },
+                        ),
+                );
+            });
+            view.active_block_metadata = Some(BlockMetadata::new(
+                Some(SessionId::from(3)),
+                Some("/var/lib".to_owned()),
+            ));
+            assert_eq!(view.ssh_split_target(ctx), None);
+        });
+    });
+}
+
+#[test]
+fn ssh_split_directory_is_changed_to_on_the_same_host_only() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            view.enter_ssh_session_for_test("ssh deploy@web-1", "/", "/srv/my app", ctx);
+            let sessions = view.sessions.as_ref(ctx);
+            let local_session = sessions.get(SessionId::from(1)).unwrap();
+            let remote_session = sessions.get(SessionId::from(2)).unwrap();
+            let target = view.ssh_split_target(ctx).unwrap();
+            fn pending_command(view: &TerminalView, ctx: &AppContext) -> Option<String> {
+                let input = view.input().as_ref(ctx);
+                input.has_pending_command().then(|| input.buffer_text(ctx))
+            }
+
+            // A local session bootstrapping (the new pane's own shell) leaves it pending.
+            view.pending_ssh_split_directory = target.remote_directory.clone();
+            view.change_to_pending_ssh_split_directory(&local_session, ctx);
+            assert_eq!(view.pending_ssh_split_directory, target.remote_directory);
+            assert_eq!(pending_command(view, ctx), None);
+
+            // Another host consumes it without changing directory.
+            view.pending_ssh_split_directory = Some(SshSplitDirectory {
+                hostname: "web-2".to_owned(),
+                ..target.remote_directory.clone().unwrap()
+            });
+            view.change_to_pending_ssh_split_directory(&remote_session, ctx);
+            assert_eq!(view.pending_ssh_split_directory, None);
+            assert_eq!(pending_command(view, ctx), None);
+
+            view.pending_ssh_split_directory = target.remote_directory.clone();
+            view.change_to_pending_ssh_split_directory(&remote_session, ctx);
+            assert_eq!(view.pending_ssh_split_directory, None);
+            assert_eq!(
+                pending_command(view, ctx),
+                Some("cd /srv/my\\ app".to_owned())
+            );
+        });
     });
 }
