@@ -6,21 +6,12 @@ done
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d /tmp/warp-lean-check.XXXXXX)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/bin" "$work/config/warp-terminal" "$work/data/warp-terminal/themes"
+mkdir -p "$work/bin"
 cat > "$work/bin/cargo" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$LEAN_CHECK_ARGS"
 MOCK
-cat > "$work/bin/xdg-mime" <<'MOCK'
-#!/usr/bin/env bash
-exit 0
-MOCK
-cp "$work/bin/xdg-mime" "$work/bin/update-desktop-database"
-cat > "$work/fake-warp" <<'MOCK'
-#!/usr/bin/env bash
-[[ $1 == dump-settings-schema ]] && printf '{}' > "$2"
-MOCK
-chmod +x "$work/bin/"* "$work/fake-warp"
+chmod +x "$work/bin/"*
 export PATH="$work/bin:$PATH" LEAN_CHECK_ARGS="$work/args"
 export CARGO_TARGET_DIR="$work/target"
 [[ $("$repo/lean/build.sh") == "$work/target/lean/warp-oss" ]]
@@ -34,31 +25,6 @@ assert {'lean', 'jemalloc', 'settings_file', 'ligatures', 'pluggable_notificatio
 assert not features & {'gui', 'voice_input', 'release_bundle', 'agent_mode', 'factory_mcp', 'crash_reporting'}
 assert not any(feature.startswith('nld_') for feature in features)
 PY
-export LEAN_INSTALL_PREFIX="$work/prefix" XDG_CONFIG_HOME="$work/config"
-export XDG_DATA_HOME="$work/data" XDG_STATE_HOME="$work/state"
-printf 'is_settings_sync_enabled = true\n' > "$work/config/warp-terminal/settings.toml"
-printf 'bindings: []\n' > "$work/config/warp-terminal/keybindings.yaml"
-printf 'secret\n' > "$work/config/warp-terminal/user_preferences.json"
-printf 'secret\n' > "$work/config/warp-terminal/auth.json"
-printf 'theme\n' > "$work/data/warp-terminal/themes/example.yaml"
-"$repo/lean/install-linux.sh" "$work/fake-warp" >/dev/null
-cmp "$work/config/warp-terminal/settings.toml" "$work/config/warp-oss/settings.toml"
-cmp "$work/config/warp-terminal/keybindings.yaml" "$work/config/warp-oss/keybindings.yaml"
-cmp "$work/data/warp-terminal/themes/example.yaml" "$work/data/warp-oss/themes/example.yaml"
-[[ ! -e $work/config/warp-oss/user_preferences.json && ! -e $work/config/warp-oss/auth.json ]]
-[[ -s $work/prefix/lib/warp-lean/resources/settings_schema.json ]]
-printf 'keep\n' > "$work/config/warp-oss/settings.toml"
-"$repo/lean/install-linux.sh" "$work/fake-warp" >/dev/null
-[[ $(cat "$work/config/warp-oss/settings.toml") == keep ]]
-rg -q 'x-scheme-handler/warposs' "$work/data/applications/dev.warp.WarpOss.desktop"
-rg -q '^Name=Warper$' "$work/data/applications/dev.warp.WarpOss.desktop"
-[[ -L $work/prefix/bin/warper && -f $work/prefix/lib/warp-lean/warp-oss.lean-v0.1.0 ]]
-ln -s "$work/prefix/lib/warp-lean/warp-oss" "$work/prefix/bin/warp-lean"
-"$repo/lean/install-linux.sh" "$work/fake-warp" >/dev/null
-[[ ! -L $work/prefix/bin/warp-lean ]]
-ln -s "$work/fake-warp" "$work/prefix/bin/warp-lean"
-"$repo/lean/install-linux.sh" "$work/fake-warp" >/dev/null
-[[ -L $work/prefix/bin/warp-lean ]]
 git init -q -b master "$work/upstream"
 git -C "$work/upstream" -c user.name=Check -c user.email=check@example.invalid commit -qm initial --allow-empty
 git clone -q "$work/upstream" "$work/fork"
@@ -96,4 +62,4 @@ fi
 [[ -d $work/fork/.git/rebase-merge ]]
 [[ $(git -C "$work/fork" diff --name-only --diff-filter=U) == new-file ]]
 rg -q 'Rebase stopped' "$work/conflict-log"
-echo 'Build interface, safe/idempotent install and upstream sync checks passed.'
+echo 'Build interface and upstream sync checks passed.'

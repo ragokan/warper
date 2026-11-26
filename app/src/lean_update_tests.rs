@@ -4,38 +4,26 @@ use std::path::Path;
 use super::*;
 
 #[test]
-fn script_sits_next_to_the_linux_binary() {
-    let exe = Path::new("/home/me/.local/lib/warp-lean/warp-oss");
-    let marker = Path::new("/home/me/.local/state/warp-oss/restart-7");
-    assert_eq!(
-        update_command(exe, false, 7, marker),
-        "WARPER_PID=7 WARPER_RESTART_FILE='/home/me/.local/state/warp-oss/restart-7' \
-         sh '/home/me/.local/lib/warp-lean/warper-update'"
-    );
-}
-
-#[test]
-fn script_is_in_the_resources_of_the_macos_bundle() {
+fn script_is_in_the_resources_of_the_app_bundle() {
     let exe = Path::new("/Applications/Warper.app/Contents/MacOS/warp-oss");
-    let command = update_command(exe, true, 7, Path::new("/m"));
-    assert!(
-        command
-            .ends_with("sh '/Applications/Warper.app/Contents/MacOS/../Resources/warper-update'"),
-        "{command}"
+    let marker = Path::new("/Users/me/.warp-oss/restart-7");
+    assert_eq!(
+        update_command(exe, 7, marker),
+        "WARPER_PID=7 WARPER_RESTART_FILE='/Users/me/.warp-oss/restart-7' \
+         sh '/Applications/Warper.app/Contents/MacOS/../Resources/warper-update'"
     );
 }
 
 #[test]
 fn quotes_in_paths_cannot_end_the_shell_string() {
     let command = update_command(
-        Path::new("/home/o'brien/warp-oss"),
-        false,
+        Path::new("/Users/o'brien/Warper.app/Contents/MacOS/warp-oss"),
         7,
         Path::new("/m'x"),
     );
     assert_eq!(
         command,
-        r"WARPER_PID=7 WARPER_RESTART_FILE='/m'\''x' sh '/home/o'\''brien/warper-update'"
+        r"WARPER_PID=7 WARPER_RESTART_FILE='/m'\''x' sh '/Users/o'\''brien/Warper.app/Contents/MacOS/../Resources/warper-update'"
     );
 }
 
@@ -62,16 +50,6 @@ fn the_restart_quit_skips_the_dialog_unless_code_is_unsaved() {
 }
 
 #[test]
-fn installed_version_is_read_next_to_the_linux_binary() {
-    let directory = tempfile::tempdir().unwrap();
-    fs::write(directory.path().join("VERSION"), "0.3.5\n").unwrap();
-
-    let version = installed_version_at(&directory.path().join("warp-oss"), false);
-
-    assert_eq!(version.as_deref(), Some("v0.3.5"));
-}
-
-#[test]
 fn installed_version_is_read_from_the_macos_bundle_plist() {
     let directory = tempfile::tempdir().unwrap();
     let contents = directory.path().join("Warper.app/Contents");
@@ -92,7 +70,7 @@ fn installed_version_is_read_from_the_macos_bundle_plist() {
     )
     .unwrap();
 
-    let version = installed_version_at(&contents.join("MacOS/warp-oss"), true);
+    let version = installed_version_at(&contents.join("MacOS/warp-oss"));
 
     assert_eq!(version.as_deref(), Some("v0.3.5"));
 }
@@ -100,10 +78,9 @@ fn installed_version_is_read_from_the_macos_bundle_plist() {
 #[test]
 fn a_source_build_has_no_installed_version() {
     let directory = tempfile::tempdir().unwrap();
-    let exe = directory.path().join("warp-oss");
 
-    assert_eq!(installed_version_at(&exe, false), None);
-    assert_eq!(installed_version_at(&exe, true), None);
-    fs::write(directory.path().join("VERSION"), "\n").unwrap();
-    assert_eq!(installed_version_at(&exe, false), None);
+    assert_eq!(
+        installed_version_at(&directory.path().join("target/lean/warp-oss")),
+        None
+    );
 }

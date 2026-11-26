@@ -5,10 +5,9 @@ never contacts Warp's servers and takes its settings only from the local `settin
 Warp's files are read only. `master` stays at upstream; nothing is pushed by this tooling.
 
 Display name: **Warper**; app IDs, data directories and URL scheme are unchanged. The app icon is
-Warp's black-on-white Cow icon (`app/DockTilePlugin/Resources/cow.png`; `lean/warper-icon.png` is
-its 512 px copy for Linux), so the Dock, Finder, launchers and desktop notifications all show it.
-Releases use `warper-macos-arm64.zip` / `.dmg` and `warper-linux-arm64.tar.gz` (`warper` binary).
-The installer preserves `warp-oss.lean-v0.1.0` for rollback.
+Warp's black-on-white Cow icon (`app/DockTilePlugin/Resources/cow.png`), so the Dock, Finder and
+desktop notifications all show it. Warper supports macOS on Apple silicon only; releases ship
+`warper-macos-arm64.zip` and `.dmg` (0.3.6 and earlier also had a Linux arm64 build).
 
 ## Build
 
@@ -18,73 +17,49 @@ With Rust 1.92.0 and the upstream native build prerequisites installed:
 lean/build.sh
 ```
 
-This platform-neutral interface builds `warp-oss`, with `--locked --no-default-features`,
+This builds `warp-oss`, with `--locked --no-default-features`,
 profile `lean`, `lean` and `jemalloc`, and an explicit terminal feature list. It prints the binary
 path. Profile `lean` inherits release, keeps unwinding, removes debug info and symbols, and uses
 ThinLTO. Neither `release_bundle`, GUI/voice, crash reporting nor any NLD classifier/heuristic is
 selected. `gui` is an upstream voice dependency group; the binary still has the desktop GUI.
 
-On this Linux arm64 machine, build only in Docker:
+Build and test on ragmini (Mac mini, Apple silicon, 24 GB), natively and one build at a time: the
+lean build of the `warp` crate alone peaks at about 16 GB in one `rustc`. It needs Xcode with its
+Metal Toolchain (`xcodebuild -downloadComponent MetalToolchain` if a build fails compiling the
+`warpui` shaders) and `protoc`. The binary lands in `target/lean/warp-oss`, already gitignored.
+Tests use the dev profile with the same features:
 
 ```sh
-docker build -f lean/Dockerfile.linux -t warp-lean-builder lean
-docker run --rm --name warp-lean-build \
-  --memory=32g --memory-swap=32g \
-  -v "$PWD:/work" \
-  -v warp-lean-registry:/home/builder/.cargo/registry \
-  -v warp-lean-git:/home/builder/.cargo/git \
-  -e CARGO_BUILD_JOBS=12 warp-lean-builder lean/build.sh
+features=$(sed -n 's/^features=//p' lean/build.sh)
+cargo test --locked -p warp --lib --no-default-features --features "$features" <filter>
+cargo test --locked -p warp --lib <filter>   # the same tests in the default build
 ```
 
-Always pass `--memory=32g --memory-swap=32g` and run one build container at a time: the lean build
-of the `warp` crate alone peaks at about 16 GB in one `rustc` (6.8 GB for `cargo check`), `/tmp`
-may be RAM-backed, and an uncapped container can get other processes OOM-killed. If a run exits with 137 it hit the cap:
-lower `LEAN_RUSTC_THREADS` (the threads add 0.5–1 GB at 8) or, for cold builds that run several
-heavy crates at once, `CARGO_BUILD_JOBS`. Keep `CARGO_BUILD_JOBS` at 8 or more: the frontend
-threads draw from the same jobserver, and with `CARGO_BUILD_JOBS=1` the wrapper gave no speedup.
-
-The image sets `RUSTC_WRAPPER=/usr/local/bin/rustc-wrapper` (`lean/rustc-wrapper`). It gives crates
-under `/work` rustc's parallel frontend (`RUSTC_BOOTSTRAP=1 -Zthreads=8`, because the stable
-frontend is single-threaded and `warp` is one huge crate); registry and git crates, cargo's version
-probes and build-script probes run untouched. Change the thread count with `-e
-LEAN_RUSTC_THREADS=4`, or turn the wrapper off with `-e RUSTC_WRAPPER=`. The wrapper does not
-change Cargo's fingerprints, so it can be toggled without rebuilding. CI does not use this image.
-
-New Docker volumes can be root-owned. If Cargo reports permission denied on its caches, correct
-ownership of those two volumes to uid/gid 1000. Never mount over `.cargo` or `.rustup`; that would
-hide the image's Rust toolchain. The target directory is `target/lean`, already gitignored.
-Do not run `script/run`, bootstrap, or reference-fork code for this build.
+In the dev profile `debug_assert!` is on; `lean_registered_surfaces_exclude_removed_features` fails
+there at baseline (`WorkspaceRegistry` registered twice). Do not run `script/run`, bootstrap, or
+reference-fork code for this build.
 
 ## Install
 
+Download `warper-macos-arm64.zip` or `.dmg` from the latest `lean-v*` release of
+`ragokan/warper` and move `Warper.app` to Applications (see `lean/ci/README.md` for Gatekeeper).
+To package a local build the same way:
+
 ```sh
-lean/install-linux.sh
+GIT_RELEASE_TAG=lean-vX.Y.Z lean/ci/bundle-macos.sh target/lean/warp-oss dist
 ```
 
-The installer puts the binary in `~/.local/lib/warp-lean/warp-oss`, adds
-`~/.local/bin/warper`, installs the Warper icon and a desktop launcher, generates the settings
-schema beside the executable, and registers `warposs://` for opening tabs, windows and settings.
-Terminal fonts, shell bootstrap and normal UI assets are embedded by the upstream release asset
-provider. No Oz skills or remote-server binaries are installed.
-
-OSS directories follow XDG overrides, otherwise:
-
-- Config: `~/.config/warp-oss`
-- Data: `~/.local/share/warp-oss`
-- State/logs: `~/.local/state/warp-oss`
-- Cache: `~/.cache/warp-oss`
-
-The installer copies missing `settings.toml` and `keybindings.yaml` files and the `themes`
-directory from the corresponding `warp-terminal` directories. Existing OSS copies are preserved.
-Legacy `user_preferences.json` is omitted because it contains free-form saved prompts and cannot be
-established to be secret-free. No auth files, tokens, keychain entries or databases are migrated.
+Warper keeps `settings.toml` (and `keybindings.yaml`, themes, `avatar.*`) in `~/.warp-oss`, its
+data in `~/Library/Application Support/dev.warp.WarpOss` and its log in
+`~/Library/Logs/warp-oss.log`. Terminal fonts, shell bootstrap and normal UI assets are embedded.
+No Oz skills or remote-server binaries ship.
 
 ## Offline
 
 Warper has no account. Startup never reads the keychain, so the app is always signed out, and
 there is no sign-in, sign-up, Log out, Account page or Settings sync toggle. `warposs://auth` links
 and `warposs://settings/account` are ignored. Settings live only in `settings.toml`
-(`~/.config/warp-oss/settings.toml`, `~/.warp-oss/settings.toml` on macOS); sync it between
+(`~/.warp-oss/settings.toml`); sync it between
 machines with your dotfiles. Edits to the file are picked up while Warper runs. The
 `account.is_settings_sync_enabled` key is hidden and ignored.
 
@@ -106,9 +81,7 @@ The gates, each reusing an upstream code path:
   lean code makes one.
 
 Older Warper builds stored a login in the platform keychain. Warper leaves it alone; delete it
-yourself if you want it gone. On Linux, remove the `dev.warp.WarpOss` entries in your keyring
-(for example with Seahorse), and `~/.local/state/warp-oss/dev.warp.WarpOss-*` if the keyring was
-unavailable. On macOS, delete the `dev.warp.WarpOss` items in Keychain Access.
+yourself if you want it gone: delete the `dev.warp.WarpOss` items in Keychain Access.
 
 ## Hidden surfaces
 
@@ -160,14 +133,13 @@ plugins may no longer fall back to legacy notifications.
 
 The round button at the top right opens the avatar menu. It shows the Yoda image built into
 Warper. To use your own, put `avatar.png`, `avatar.jpg` or `avatar.jpeg` (first match wins) in the
-config directory that holds `settings.toml` (`~/.config/warp-oss` on Linux, `~/.warp-oss` on
-macOS). The gear icon only shows while the image loads or if it cannot be decoded. The image is
+config directory that holds `settings.toml` (`~/.warp-oss`). The gear icon only shows while the image loads or if it cannot be decoded. The image is
 looked up once per run and cropped to a circle; restart Warper after replacing it.
 
 ## Updates
 
-Warper never looks for updates itself. **Check for Updates…** (macOS: Warper menu; Linux: avatar
-menu; both: command palette) opens a tab that runs the bundled `warper-update` script. The script
+Warper never looks for updates itself. **Check for Updates…** (Warper menu, avatar menu or
+command palette) opens a tab that runs the bundled `warper-update` script. The script
 asks the GitHub releases of `ragokan/warper` for the latest `lean-vX.Y.Z` and says "up to date"
 unless it is newer than the installed version; otherwise it shows the version and release link
 and asks before doing anything. If the installed version is unknown it says so and asks too,
@@ -177,34 +149,16 @@ close). On yes the script starts a detached relauncher that sends no signal: it 
 for Warper's process to exit, then starts the new version, and Warper quits through its normal
 shutdown, so the usual state save runs. It skips the "Quit Warp?" dialog, because you just
 confirmed; unsaved code changes still raise it. If Warper never exits (say, you cancel that
-dialog) the relauncher gives up silently (on Linux it still deletes the hidden old binary once
-Warper exits). Answer no and the update applies the next time you
+dialog) the relauncher gives up silently. Answer no and the update applies the next time you
 launch it. The tab hands Warper's PID to the script, so run from another terminal the script just
 installs.
 
-- Linux: updates the install the script sits in (`warp-oss`, `warper-update`, `resources/` and
-  `VERSION` in one directory, `~/.local/lib/warp-lean` after `lean/install-linux.sh`); a portable
-  copy without `warp-oss` is refused. It stages the whole new install beside it, swaps the pieces
-  with renames and puts the old ones back if any step fails. Once the new install is in place the
-  old files are deleted, so no previous copy remains (a `warp-oss.previous` left by an older
-  updater is removed too). Linux keeps the old binary, hidden as `.warp-oss.old` inside the
-  install, only until the old Warper exits, so that Warper still finds the new resources and
-  updater through its own path; a detached waiter, started before the restart prompt so closing
-  the tab there is harmless, deletes it when that PID is gone (a run from another terminal has no
-  PID and leaves it for the next update to replace). If it cannot
-  restore the old files it leaves them in the hidden `.warper-update.*` folder next to the
-  install and prints the path. If an update is interrupted (a SIGKILL or power loss between the renames), the
-  previous files are in that folder; move them back. The script finds its install through
-  symlinks too. `VERSION` comes
-  from the release tag: the release archive ships it and `lean/install-linux.sh` copies it, but
-  removes it for a source build, which the updater then reports as "installed version unknown
-  (built from source)".
-- macOS: replaces the running `Warper.app` in place, without sudo. The old app waits in the
-  hidden `.warper-update.*` folder beside it until the new one is in place (and is moved back if
-  that fails; if even that fails the folder is kept and named), then it is deleted, together with
-  a `Warper.previous.app` left by an older updater.
-  If the app's folder is not writable it says so and stops. The installed version is the bundle's
-  `CFBundleShortVersionString`.
+It replaces the running `Warper.app` in place, without sudo. The old app waits in the
+hidden `.warper-update.*` folder beside it until the new one is in place (and is moved back if
+that fails; if even that fails the folder is kept and named), then it is deleted, together with
+a `Warper.previous.app` left by an older updater. If the app's folder is not writable it says so
+and stops. The installed version is the bundle's `CFBundleShortVersionString`; other platforms
+are refused.
 
 ## Patches
 
@@ -230,7 +184,7 @@ fixes listed below also apply to default builds.
 | `app/src/drive/settings.rs` | Hides Drive surfaces without disabling settings sync. |
 | `app/src/lib.rs` | Never uses the platform keychain (the existing "unavailable" secure storage), so the app is always signed out; disables loopback HTTP, outlining/index restoration, Oz/agent/remote CLI modes custom AI endpoint initialization and AWS AI-credential subscriptions. Normal terminal-server workers remain available. |
 | `app/src/ui_components/avatar.rs`, `app/src/workspace/view.rs`, `app/assets/bundled/jpg/warper_avatar.jpg` | The avatar button shows the user's `avatar.png`/`.jpg`/`.jpeg` from the config directory, else the built-in Yoda image (an always-embedded bundled asset); the gear icon is only the loading and decode-failure placeholder. |
-| `app/src/lean_update.rs`, `app/src/quit_warning/mod.rs`, `app/src/workspace/mod.rs`, `app/src/workspace/view.rs`, `app/src/app_menus.rs`, `app/src/util/bindings.rs` | Lean-only "Check for Updates…" command (macOS app menu, avatar menu, command palette) opening a tab that runs the bundled `warper-update`; Warper itself makes no request. The restart quit skips the Quit dialog unless code is unsaved. |
+| `app/src/lean_update.rs`, `app/src/quit_warning/mod.rs`, `app/src/workspace/mod.rs`, `app/src/workspace/view.rs`, `app/src/app_menus.rs`, `app/src/util/bindings.rs` | Lean-only "Check for Updates…" command (app menu, avatar menu, command palette) opening a tab that runs the `warper-update` in the app bundle's `Resources`; Warper itself makes no request. The restart quit skips the Quit dialog unless code is unsaved. |
 | `crates/settings/src/lib.rs` | GUI settings never sync to the cloud: the syncer runs in the same inert mode as the TUI's. |
 | `app/src/server/cloud_objects/listener.rs` | Never starts the cloud-objects websocket, even with objects cached from an earlier login. |
 | `crates/http_client/src/lib.rs` | Fail-safe: every client resolves hosts through a resolver that always fails and ignores proxies, so no request can leave the machine. |
@@ -263,8 +217,7 @@ fixes listed below also apply to default builds.
 | `app/src/workspace/view.rs` | Hides and disables the legacy AI assistant fallback and removes changelog/billing/referral menu entries. |
 | `app/src/uri/mod.rs` | Ignores AI, cloud-agent, MCP, Drive, shared-session and auth deep links and the Account settings route; keeps normal terminal URLs. |
 | `app/src/changelog_model.rs` | Rejects every changelog request, including explicit actions. |
-| `app/src/app_services/linux/mod.rs` | Enables existing single-instance URL forwarding so a second launch hands its arguments to the running Warper. |
-| `app/src/terminal/view.rs` | Handles intercepted `warp://cli-agent` OSC 777 payloads only from the integrated CLI agents and drops the rest. Lean Linux caps terminal wakeups at 30/s for software rendering; other builds keep 60/s. |
+| `app/src/terminal/view.rs` | Handles intercepted `warp://cli-agent` OSC 777 payloads only from the integrated CLI agents and drops the rest. |
 | `app/src/terminal/alt_screen/alt_screen_element.rs` | Lean samples the alt-screen background color only while an integrated CLI agent's toolbar can use it. |
 | `app/src/editor/view/mod.rs`, `app/src/editor/view/mod_tests.rs` | Lean stops the editor cursor blink (and its redraw timer) after 30 s without an editor event; the next event restarts it. A window that is not the active one already stops the timer upstream; a test pins both. |
 | `app/src/lib.rs`, `app/src/settings/import/{model,view,model_tests}.rs`, `app/src/settings_view/{appearance_page,appearance_page_tests,mod,mod_tests}.rs`, `app/src/view_components/filterable_dropdown.rs` | Lean does not enumerate and load every system font at startup: the settings-import search (which needs the font list) starts when the import block is first added, and the Appearance page requests the list the first time its font dropdown is opened (selecting the page, as a restored background Settings tab does, only refreshes the dropdown's label; lean's default settings section is Appearance, since it has no Account page). A font list that arrives while the user is already searching keeps a match selected, so Enter works. The configured font and its fallbacks load on demand as before. On macOS the "Import External Settings" entry therefore stays listed until it is used (the block closes itself when nothing is found). |
@@ -273,7 +226,7 @@ fixes listed below also apply to default builds.
 | `app/src/terminal/local_shell/mod.rs` | Lean does not start a login shell at launch to read `$PATH`; its only reader is the hidden Drive secrets dialog, which falls back to the login shell's own `PATH`. |
 | `crates/watcher/src/home_watcher.rs`, `crates/watcher/src/home_watcher_tests.rs` | Lean registers no watch on the home directory: its subscribers (MCP config, skills, global rules) are AI-only, and on macOS the non-recursive watch is an FSEvents stream over the whole home tree. The singleton stays so AI-only code that looks it up cannot panic. |
 | `crates/repo_metadata/src/local_model.rs`, `crates/repo_metadata/src/local_model_tests.rs` | Lean does not index (walk and recursively watch) every repository a session enters; the file tree, `@` menu, command-palette file search and AI context that read the index are all off. Repository detection itself, used by git status, is unchanged. |
-| `app/src/lean_update.rs`, `app/src/lean_update_tests.rs`, `app/src/settings_view/about_page.rs` | The About page shows the installed version (`CFBundleShortVersionString` of the macOS bundle, else `VERSION` next to the executable; the sources `warper-update` reads), since lean compiles no release version into the binary and the page used to show `v#.##.###`. |
+| `app/src/lean_update.rs`, `app/src/lean_update_tests.rs`, `app/src/settings_view/about_page.rs` | The About page shows the installed version (the bundle's `CFBundleShortVersionString`, which `warper-update` also reads), since lean compiles no release version into the binary and the page used to show `v#.##.###`. |
 | `app/src/appearance.rs` | With a custom app icon, lean writes it into the app bundle only when the bundle does not already carry it (private preference `WrittenBundleIcon` plus the bundle's `Icon\r` file); upstream rewrote it on the main thread at every launch, which cost about 200 ms before the first window on the user's Mac. |
 | `crates/warpui/Cargo.toml`, `crates/warpui/build.rs`, `crates/warpui/src/platform/{mac,headless}/delegate.rs`, `app/Cargo.toml` | AVFoundation is linked only with the new `warpui` feature `microphone_access`, which the app's `voice_input` feature (part of upstream's `gui`) enables. Lean does not load the framework at launch; without the feature the microphone permission reads as not determined. |
 | `app/src/pane_group/{mod,mod_tests}.rs`, `app/src/terminal/view.rs`, `app/src/terminal/view_tests.rs`, `app/src/terminal/model/{session,terminal_model,terminal_model_tests}.rs`, `app/src/tui_test_support.rs` | Splitting a pane (Cmd+D/Ctrl+Shift+D, the other split bindings and the app menu's split items) whose active session is a warpified SSH session started by an interactive plain `ssh` command in a local session opens a local shell in the directory that `ssh` ran in, runs the same `ssh` command, and once that SSH session bootstraps on the same user and host, runs `cd` to the original pane's remote directory. It is a new connection, so a password or 2FA login prompts again. Splitting with a shell picked from the split menu, `ssh` commands with a remote command or `-T`, SSH-like commands (`gcloud compute ssh`, `mosh`) and SSH sessions started from a remote session split locally as before. Ungated and behavior-neutral: sessions record the command and directory of the block that started them (`SessionInfo::spawning_block`). |
@@ -281,13 +234,13 @@ fixes listed below also apply to default builds.
 | `crates/watcher/src/lib.rs`, `crates/watcher/src/lib_tests.rs` | Ungated: a `BulkFilesystemWatcher` starts its background thread (and the debouncer thread, which wakes every quarter of the debounce duration) with its first path command instead of at construction, so watchers that never watch anything cost no threads. |
 | `crates/warp_logging/src/native.rs` | Ungated: the log file records milliseconds (it recorded whole seconds), so startup can be timed from the log. |
 | `app/build.rs` | Ungated: MetalKit is no longer linked; nothing uses it, and every linked framework is loaded before `main`. |
-| `lean/ci/bundle-macos.sh`, `lean/ci/bundle-linux.sh`, `lean/install-linux.sh`, `lean/warper-icon.png` | Packaging uses the Cow icon instead of the blue OSS icon. macOS desktop notifications show the bundle's `CFBundleIconFile`, not the custom Finder icon that the app-icon setting writes, so the bundle itself must carry it. |
+| `lean/ci/bundle-macos.sh` | Packaging uses the Cow icon instead of the blue OSS icon. macOS desktop notifications show the bundle's `CFBundleIconFile`, not the custom Finder icon that the app-icon setting writes, so the bundle itself must carry it. |
 | `app/src/features_lean_tests.rs`, `app/src/lib_tests.rs`, `app/src/settings/{ai,privacy}_tests.rs`, `app/src/uri/uri_tests.rs`, `app/src/settings_view/update_environment_form_tests.rs` | Policy, startup, privacy and hidden network-fetch regression checks. |
 
-`lean/` owns the Dockerfile, build/install/sync scripts, tooling self-check, benchmark sampler,
-results, progress log and a verification report. Screenshots are kept privately under
+`lean/` owns the build, sync and update scripts, the macOS packaging and its checks, the tooling
+self-check, the progress log and a verification report. Screenshots are kept privately under
 `/tmp/warp-lean-evidence/`; none are committed because the account avatar is identifying.
-The release workflow changes only artifact names for Warper.
+The release workflow (disabled; releases are built and uploaded from ragmini) builds macOS only.
 
 The runtime allowlist also disables some non-AI, non-Drive release/experiment flags:
 
@@ -322,36 +275,25 @@ later measurements justify them. No GPU timing or storage/selection behavior cha
 - Concurrent requests for the system font list share one enumeration; startup used to run it
   twice at once (settings import and the Appearance page), loading every family twice.
 
-## Checks and benchmarks
+## Checks
 
 ```sh
 lean/check-tools.sh
-bash -n lean/*.sh
+for script in lean/*.sh lean/ci/*.sh lean/warper-update; do bash -n "$script"; done
+python3 -m unittest discover -s lean/ci -p '*_tests.py'
 ```
 
 The self-check requires `rg` and `python3` in addition to Bash, Git and standard Unix tools.
-It checks these prerequisites before creating fixtures. Temporary Cargo/desktop stubs assert
-the build interface and installer copy boundaries/idempotence; real local Git repositories
-exercise upstream sync and conflict handling. It does
-not replace the release build or the real desktop checks. Actual run results and gaps are in
-`PROGRESS.md` and the final verification report.
+It checks these prerequisites before creating fixtures. A temporary Cargo stub asserts the build
+interface; real local Git repositories exercise upstream sync and conflict handling. The Python
+tests cover `warper-update` (against shimmed `uname`, `defaults`, `ditto`, `codesign` and
+`open`) and the bundle checks. None of this replaces the release build or the real desktop
+checks; run results and gaps are in `PROGRESS.md` and `VERIFICATION.md`.
 
-Use Cua Driver for all launch/input/screenshots. Keep screenshots privately under
-`/tmp/warp-lean-evidence/`; never commit screenshots. Stable Warp must be closed and no build may be running during benchmarks.
-Use the copied settings, matching font, zoom and default 1280x800 window. For **each** run:
-
-1. Launch and settle about 20 seconds. Click window-local `(640,760)` with foreground delivery.
-2. `lean/bench.sh <binary> 60 lean-idle-1tab`
-3. Start `lean/bench.sh <binary> 25 lean-burst-seq300k` in the background, then type
-   `seq 1 300000` and Enter.
-4. Press Ctrl+Shift+T four times, 1.5 seconds apart. Wait ten seconds.
-5. `lean/bench.sh <binary> 40 lean-idle-5tabs`
-6. Quit and repeat the full sequence at least once.
-
-The sampler matches **all** processes by `/proc/PID/exe`. It records CPU seconds and CPU percent
-against measured elapsed time, endpoint RSS/PSS/thread count and sampled peak RSS. Its inspection
-adds time beyond nominal seconds; compare the same script/protocol and prefer CPU seconds for
-the burst. The supplied stable baseline stays unchanged in `bench-results.tsv`.
+Use Cua Driver for all launch/input/screenshots. For a desktop check, run the packaged app with its
+own `HOME` so it does not touch your Warper's settings and data
+(`HOME=$tmp/home Warper.app/Contents/MacOS/warp-oss`); CFPreferences ignores `HOME`, so the app's
+user defaults (`dev.warp.WarpOss`) are still the real ones.
 
 ## Sync with upstream
 

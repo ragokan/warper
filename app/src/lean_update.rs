@@ -31,7 +31,7 @@ pub fn open_update_tab(workspace: &mut Workspace, ctx: &mut ViewContext<Workspac
         PanesLayout::Template(PaneTemplateType::PaneTemplate {
             cwd: PathBuf::new(),
             commands: vec![CommandTemplate {
-                exec: update_command(&exe, cfg!(target_os = "macos"), pid, &marker),
+                exec: update_command(&exe, pid, &marker),
             }],
             is_focused: Some(true),
             pane_mode: PaneMode::Terminal,
@@ -49,39 +49,28 @@ pub fn open_update_tab(workspace: &mut Workspace, ctx: &mut ViewContext<Workspac
 pub fn installed_version() -> Option<&'static str> {
     static VERSION: OnceLock<Option<String>> = OnceLock::new();
     VERSION
-        .get_or_init(|| {
-            let exe = std::env::current_exe().ok()?;
-            installed_version_at(&exe, cfg!(target_os = "macos"))
-        })
+        .get_or_init(|| installed_version_at(&std::env::current_exe().ok()?))
         .as_deref()
 }
 
-/// Reads `CFBundleShortVersionString` from the app bundle's `Info.plist` on macOS, else the
-/// `VERSION` file next to the executable.
-fn installed_version_at(exe: &Path, in_app_bundle: bool) -> Option<String> {
-    let dir = exe.parent()?;
-    let version = if in_app_bundle {
-        plist::Value::from_file(dir.join("../Info.plist"))
-            .ok()?
-            .as_dictionary()?
-            .get("CFBundleShortVersionString")?
-            .as_string()?
-            .to_owned()
-    } else {
-        fs::read_to_string(dir.join("VERSION")).ok()?
-    };
+/// Reads `CFBundleShortVersionString` from the app bundle's `Info.plist`.
+fn installed_version_at(exe: &Path) -> Option<String> {
+    let version = plist::Value::from_file(exe.parent()?.join("../Info.plist"))
+        .ok()?
+        .into_dictionary()?
+        .remove("CFBundleShortVersionString")?
+        .into_string()?;
     let version = version.trim();
     (!version.is_empty()).then(|| format!("v{version}"))
 }
 
-/// The script sits next to the executable, or in the app bundle's `Resources` on macOS.
-fn update_command(exe: &Path, in_app_bundle: bool, pid: u32, marker: &Path) -> String {
-    let dir = exe.parent().unwrap_or(Path::new(""));
-    let script = if in_app_bundle {
-        dir.join("../Resources").join(SCRIPT_NAME)
-    } else {
-        dir.join(SCRIPT_NAME)
-    };
+/// The script sits in the app bundle's `Resources`.
+fn update_command(exe: &Path, pid: u32, marker: &Path) -> String {
+    let script = exe
+        .parent()
+        .unwrap_or(Path::new(""))
+        .join("../Resources")
+        .join(SCRIPT_NAME);
     format!(
         "WARPER_PID={pid} WARPER_RESTART_FILE={} sh {}",
         quote(marker),

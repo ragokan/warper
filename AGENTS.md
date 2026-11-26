@@ -262,5 +262,5 @@ Conventions:
 - Gate behavior changes with `cfg!(feature = "lean")` in `app` and `warpui_core::lean::IS_LEAN` in other crates, so default builds stay unchanged. Only behavior-preserving fixes go ungated, and they are listed under "Ungated performance fixes" in `lean/README.md`.
 - A test for a gate asserts against `cfg!(feature = "lean")` or `IS_LEAN`, runs in both builds, and is shown to fail without the change.
 - Every change gets a dated entry at the top of `lean/PROGRESS.md` (what, why, measurements, tests, what remains unverified) and a row in the `lean/README.md` patch table.
-- Build and test only in the Docker builder described under "Build" in `lean/README.md`, one container at a time.
-- macOS cannot be built or run on the Linux host. macOS-only code is compiled by the macOS release CI or on a Mac, and every macOS claim states whether it was measured there.
+- Warper supports macOS on Apple silicon only. Build, test and run it natively on ragmini (this Mac mini), one build at a time, as described under "Build" in `lean/README.md`. Linux and Windows code paths are neither built nor tested there; do not add lean gates for them.
+- Releases are built, packaged and published from ragmini without GitHub Actions, as described in `lean/ci/README.md`.

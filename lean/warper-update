@@ -6,6 +6,7 @@ set -eu
 repo=ragokan/warper
 api=${WARPER_UPDATE_API:-https://api.github.com/repos/$repo/releases/latest}
 download=${WARPER_UPDATE_DOWNLOAD:-https://github.com/$repo/releases/download}
+asset=warper-macos-arm64.zip
 
 die() {
     printf 'warper-update: %s\n' "$*" >&2
@@ -30,37 +31,18 @@ is_newer() {
     }'
 }
 
-sha256_of() {
-    if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | awk '{print $1}'
-    else
-        shasum -a 256 "$1" | awk '{print $1}'
-    fi
-}
+[ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] ||
+    die "there is no Warper release for $(uname -s) $(uname -m)"
 
-case $(uname -s)-$(uname -m) in
-    Linux-aarch64 | Linux-arm64) os=linux asset=warper-linux-arm64.tar.gz ;;
-    Darwin-arm64) os=macos asset=warper-macos-arm64.zip ;;
-    *) die "there is no Warper release for $(uname -s) $(uname -m)" ;;
-esac
-
-if [ "$os" = linux ]; then
-    # The script ships next to warp-oss, so it updates the install it belongs to.
-    app=${WARPER_APP:-$(cd "$(dirname "$(readlink -f "$0")")" && pwd)}
-    [ -x "$app/warp-oss" ] || die "$app/warp-oss not found; run warper-update from an installed Warper (portable copies cannot be updated in place)"
-    installed=$(cat "$app/VERSION" 2>/dev/null || true)
-else
-    bundle=${WARPER_APP:-$(cd "$(dirname "$0")/../.." && pwd)}
-    case $bundle in *.app) ;; *) die "run this from inside Warper.app (found $bundle)" ;; esac
-    installed=$(defaults read "$bundle/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)
-fi
+bundle=${WARPER_APP:-$(cd "$(dirname "$0")/../.." && pwd)}
+case $bundle in *.app) ;; *) die "run this from inside Warper.app (found $bundle)" ;; esac
+installed=$(defaults read "$bundle/Contents/Info" CFBundleShortVersionString 2>/dev/null || true)
 printf '%s\n' "$installed" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || installed=
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/warper-update.XXXXXX")
 stage=
 keep_stage=
-old=
-# The staging dir holds the previous files; it is only removed once nothing in it is needed.
+# The staging dir holds the previous app; it is only removed once nothing in it is needed.
 cleanup() {
     rm -rf "$work"
     [ -z "$stage" ] || [ -n "$keep_stage" ] || rm -rf "$stage"
@@ -90,84 +72,30 @@ curl -fSL -o "$work/$asset" "$download/$tag/$asset" || die "could not download $
 curl -fsSL -o "$work/SHA256SUMS" "$download/$tag/SHA256SUMS" || die "the release has no SHA256SUMS"
 expected=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1; exit }' "$work/SHA256SUMS")
 [ -n "$expected" ] || die "SHA256SUMS has no entry for $asset"
-[ "$(sha256_of "$work/$asset")" = "$expected" ] || die "checksum mismatch for $asset; nothing was installed"
+[ "$(shasum -a 256 "$work/$asset" | awk '{print $1}')" = "$expected" ] ||
+    die "checksum mismatch for $asset; nothing was installed"
 echo "Checksum verified"
 
-if [ "$os" = linux ]; then
-    parent=$(dirname "$app")
-    [ -w "$parent" ] && [ -w "$app" ] || die "$app and $parent must be writable to update"
-    stage=$(mktemp -d "$parent/.warper-update.XXXXXX")
-    mkdir "$work/extracted" "$stage/new" "$stage/old"
-    tar -xzf "$work/$asset" -C "$work/extracted"
-    package=$work/extracted/warper-linux-arm64
-    [ -x "$package/warper" ] || die "the archive has no warper binary"
-    # Stage the complete new install first, so the swap below is only renames and can be undone.
-    {
-        install -m 755 "$package/warper" "$stage/new/warp-oss" &&
-            install -m 755 "$package/warper-update" "$stage/new/warper-update" &&
-            cp -R "$package/resources" "$stage/new/resources" &&
-            printf '%s\n' "$latest" > "$stage/new/VERSION"
-    } || die "could not stage the new version; nothing was changed"
-    [ -s "$stage/new/warp-oss" ] && [ -d "$stage/new/resources" ] || die "the archive is incomplete; nothing was changed"
-
-    swapped=
-    swap_in() {
-        if [ -e "$app/$1" ]; then
-            mv "$app/$1" "$stage/old/$1" || return 1
-        fi
-        swapped="$swapped $1"
-        mv "$stage/new/$1" "$app/$1"
-    }
-    roll_back() {
-        for name in $swapped; do
-            if rm -rf "${app:?}/$name" && { [ ! -e "$stage/old/$name" ] || mv "$stage/old/$name" "$app/$name"; }; then
-                :
-            else
-                keep_stage=1
-            fi
-        done
-    }
-    # A rename keeps the running executable's (and this script's) inode valid until they exit.
-    for name in warp-oss warper-update VERSION resources; do
-        swap_in "$name" || {
-            roll_back
-            [ -z "$keep_stage" ] || die "Update failed and could not restore automatically; your previous files are in $stage/old"
-            die "could not install $name; the previous install was restored"
-        }
-    done
-    # The running Warper locates its resources and updater from its own executable path, so its
-    # binary stays inside the install, hidden, until that Warper exits (see the helper below).
-    # shortcut: declining the restart twice from one old Warper replaces the file it is running.
-    if mv "$stage/old/warp-oss" "$app/.warp-oss.old"; then
-        old=$app/.warp-oss.old
-    else
-        echo "warper-update: could not keep the old binary at $app/.warp-oss.old; the running Warper may not find its files until it is restarted" >&2
+parent=$(dirname "$bundle")
+[ -w "$parent" ] || die "$parent is not writable; move Warper.app somewhere you own and retry"
+stage=$(mktemp -d "$parent/.warper-update.XXXXXX")
+ditto -x -k "$work/$asset" "$stage"
+[ -d "$stage/Warper.app" ] || die "the archive has no Warper.app"
+codesign --verify --deep --strict "$stage/Warper.app" || die "the new Warper.app has an invalid signature"
+mv "$bundle" "$stage/old.app"
+if ! mv "$stage/Warper.app" "$bundle"; then
+    if mv "$stage/old.app" "$bundle"; then
+        die "could not move the new Warper.app into place; the old one was restored"
     fi
-    # Older updaters kept the previous binary here.
-    rm -f "$app/warp-oss.previous" || echo "warper-update: could not remove $app/warp-oss.previous" >&2
-    launch="$app/warp-oss"
-else
-    parent=$(dirname "$bundle")
-    [ -w "$parent" ] || die "$parent is not writable; move Warper.app somewhere you own and retry"
-    stage=$(mktemp -d "$parent/.warper-update.XXXXXX")
-    ditto -x -k "$work/$asset" "$stage"
-    [ -d "$stage/Warper.app" ] || die "the archive has no Warper.app"
-    codesign --verify --deep --strict "$stage/Warper.app" || die "the new Warper.app has an invalid signature"
-    mv "$bundle" "$stage/old.app"
-    if ! mv "$stage/Warper.app" "$bundle"; then
-        if mv "$stage/old.app" "$bundle"; then
-            die "could not move the new Warper.app into place; the old one was restored"
-        fi
-        keep_stage=1
-        die "could not move the new Warper.app into place and could not restore the old one; it is in $stage/old.app"
-    fi
-    # Older updaters kept the previous app here.
-    stale=${bundle%.app}.previous.app
-    rm -rf "$stale" || echo "warper-update: could not remove $stale" >&2
+    keep_stage=1
+    die "could not move the new Warper.app into place and could not restore the old one; it is in $stage/old.app"
 fi
+# Older updaters kept the previous app here.
+stale=${bundle%.app}.previous.app
+rm -rf "$stale" || echo "warper-update: could not remove $stale" >&2
 
-# The old files only existed to undo a failed swap. The running Warper and this script keep their
-# open files after the unlink, and the relauncher starts the new path. Removing them now, rather
+# The old app only existed to undo a failed swap. The running Warper and this script keep their
+# open files after the unlink, and the relauncher opens the new bundle. Removing it now, rather
 # than at exit, leaves nothing behind if the terminal is closed at the restart prompt.
 if rm -rf "$stage"; then
     stage=
@@ -176,39 +104,22 @@ else
 fi
 echo "Installed Warper $latest"
 
-# Detached helper: waits for Warper's PID to exit, deletes the old binary ($3, if any) and then, if
-# that took at most $2 half-seconds, runs the rest of its arguments. Without arguments it waits
-# indefinitely and only deletes. It sends no signal. Warper kills the process group of a finished
-# command, so it needs its own session.
-helper='n=0; while kill -0 "$1" 2>/dev/null; do n=$((n + 1)); [ "$n" -le "$2" ] || [ "$#" -eq 3 ] || exit 0; sleep 0.5; done; unset WARPER_PID WARPER_RESTART_FILE; [ -z "$3" ] || rm -f "$3"; [ "$#" -gt 3 ] && [ "$n" -le "$2" ] || exit 0; shift 3; exec "$@"'
-spawn_helper() {
-    set -- sh -c "$helper" sh "$WARPER_PID" "$@"
-    if command -v setsid >/dev/null 2>&1; then
-        setsid nohup "$@" >/dev/null 2>&1 </dev/null &
-    else
-        nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$@" >/dev/null 2>&1 </dev/null &
-    fi
-}
-
-# Warper passes its own PID when it opens this tab; a script run from another terminal has none,
-# and then the old binary is left for the next update to replace.
-if [ -z "${WARPER_PID:-}" ]; then
-    echo "Warper $latest will start the next time you launch it."
-    exit 0
-fi
-# Started before the prompt, so closing the tab there cannot leave the old binary behind.
-[ -z "$old" ] || spawn_helper 0 "$old"
-if ! ask 'Restart Warper now? Open tabs will close.'; then
+# Warper passes its own PID when it opens this tab; a script run from another terminal has none.
+if [ -z "${WARPER_PID:-}" ] || ! ask 'Restart Warper now? Open tabs will close.'; then
     echo "Warper $latest will start the next time you launch it."
     exit 0
 fi
 
-if [ "$os" = macos ]; then
-    set -- open "$bundle"
+# Detached relauncher: waits for Warper's PID to exit and then, if that took at most $2
+# half-seconds, runs the rest of its arguments. It sends no signal. Warper kills the process group
+# of a finished command, so it needs its own session.
+helper='n=0; while kill -0 "$1" 2>/dev/null; do n=$((n + 1)); [ "$n" -le "$2" ] || exit 0; sleep 0.5; done; unset WARPER_PID WARPER_RESTART_FILE; shift 2; exec "$@"'
+set -- sh -c "$helper" sh "$WARPER_PID" $((2 * ${WARPER_RESTART_WAIT:-60})) open "$bundle"
+if command -v setsid >/dev/null 2>&1; then
+    setsid nohup "$@" >/dev/null 2>&1 </dev/null &
 else
-    set -- "$launch"
+    nohup perl -MPOSIX -e 'POSIX::setsid(); exec @ARGV' "$@" >/dev/null 2>&1 </dev/null &
 fi
-spawn_helper $((2 * ${WARPER_RESTART_WAIT:-60})) "$old" "$@"
 # Warper quits through its normal Quit action once it sees this file.
 [ -z "${WARPER_RESTART_FILE:-}" ] || : > "$WARPER_RESTART_FILE"
 echo "Restarting Warper..."

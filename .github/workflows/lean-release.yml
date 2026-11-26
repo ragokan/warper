@@ -14,17 +14,9 @@ concurrency:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform }} arm64
-    runs-on: ${{ matrix.runner }}
+    name: Build macOS arm64
+    runs-on: macos-15
     timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos
-            runner: macos-15
-          - platform: linux
-            runner: ubuntu-24.04-arm
     defaults:
       run:
         shell: bash
@@ -39,13 +31,12 @@ jobs:
 
       - name: Check packaging logic
         run: |
-          for script in lean/ci/bundle-macos.sh lean/ci/bundle-linux.sh lean/warper-update; do
+          for script in lean/ci/bundle-macos.sh lean/warper-update; do
             bash -n "$script"
           done
           python3 -m unittest discover -s lean/ci -p '*_tests.py'
 
       - name: Install macOS build dependencies
-        if: runner.os == 'macOS'
         run: |
           test "$(uname -m)" = arm64
           xcodebuild -version
@@ -55,23 +46,12 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE=1 brew install protobuf
           protoc --version
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          test "$(uname -m)" = aarch64
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config libssl-dev \
-            libfreetype-dev libexpat1-dev libgit2-dev libfontconfig1-dev \
-            libclang-dev protobuf-compiler libegl1 libwayland-client0 libwayland-egl1 \
-            libx11-6 libxcb1 libxcursor1 libxi6 libxkbcommon-x11-0
-          protoc --version
-
       - name: Install pinned Rust toolchain
         run: rustup show active-toolchain
 
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
-          key: lean-release-${{ matrix.platform }}-arm64
+          key: lean-release-macos-arm64
           cache-on-failure: true
           save-if: ${{ github.ref_type == 'branch' }}
 
@@ -89,13 +69,12 @@ jobs:
         env:
           GIT_RELEASE_TAG: ${{ github.ref_name }}
           BINARY: ${{ steps.build.outputs.binary }}
-          PLATFORM: ${{ matrix.platform }}
-        run: bash "lean/ci/bundle-$PLATFORM.sh" "$BINARY" dist
+        run: bash lean/ci/bundle-macos.sh "$BINARY" dist
 
       - name: Upload packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: warper-${{ matrix.platform }}-arm64
+          name: warper-macos-arm64
           path: dist/*
           if-no-files-found: error
           compression-level: 0

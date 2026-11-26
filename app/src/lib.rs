@@ -1137,7 +1137,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     // so they can be replayed to Sentry once it's ready.
     #[cfg_attr(
         not(all(
-            any(feature = "release_bundle", feature = "lean"),
+            feature = "release_bundle",
             any(windows, any(target_os = "linux", target_os = "freebsd"))
         )),
         expect(unused_mut)
@@ -1145,7 +1145,7 @@ fn run_internal(mut launch_mode: LaunchMode) -> Result<()> {
     let mut pre_sentry_errors: Vec<anyhow::Error> = Vec::new();
 
     #[cfg(all(
-        any(feature = "release_bundle", feature = "lean"),
+        feature = "release_bundle",
         any(target_os = "linux", target_os = "freebsd")
     ))]
     if let LaunchMode::App { .. } = launch_mode {

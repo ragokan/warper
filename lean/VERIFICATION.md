@@ -1,5 +1,9 @@
 # Verification — Linux arm64
 
+> Historical. Warper dropped Linux on 2026-11-26 and is built, tested and released on ragmini
+> (macOS, Apple silicon); current checks are in `PROGRESS.md`. The Linux tooling named below
+> (Docker builder, installer, benchmark sampler, Linux package) no longer exists.
+
 Status: **DONE_WITH_CONCERNS**. Independent-review validation is complete on Linux arm64.
 The final review results supersede the historical build/test/UI details preserved below.
 Strict Clippy still reports eight unchanged-line diagnostics; the original burst CPU result
