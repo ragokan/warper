@@ -10946,6 +10946,74 @@ fn active_cli_agent_ignores_warp_tui_when_hoa_code_review_disabled() {
     });
 }
 
+/// Lean detects only the CLI agents it integrates.
+#[test]
+fn cli_agent_detection_covers_integrated_agents() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+
+        for (command, agent, detected) in [
+            ("claude", CLIAgent::Claude, true),
+            ("codex", CLIAgent::Codex, true),
+            ("opencode", CLIAgent::OpenCode, true),
+            ("agy", CLIAgent::Antigravity, true),
+            ("gemini", CLIAgent::Gemini, !cfg!(feature = "lean")),
+        ] {
+            let terminal = add_window_with_terminal(&mut app, None);
+            terminal.update(&mut app, |view, ctx| {
+                view.sessions.update(ctx, |sessions, _| {
+                    sessions.register_session_for_test(SessionInfo::new_for_test().with_id(1));
+                });
+                view.active_block_metadata = Some(BlockMetadata::new(
+                    Some(SessionId::from(1)),
+                    Some("/".to_owned()),
+                ));
+                view.model.lock().simulate_long_running_block(command, "");
+
+                let model = view.model.lock();
+                assert_eq!(
+                    view.detect_cli_agent_from_model(&model, ctx),
+                    detected.then_some((agent, None)),
+                    "{command}"
+                );
+            });
+        }
+    });
+}
+
+/// Lean handles structured notifications only from the CLI agents it integrates.
+#[test]
+fn cli_agent_notifications_register_integrated_agents() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let _codex_plugin = FeatureFlag::CodexPlugin.override_enabled(true);
+
+        for (name, agent, registers) in [
+            ("claude", CLIAgent::Claude, true),
+            ("codex", CLIAgent::Codex, true),
+            ("opencode", CLIAgent::OpenCode, true),
+            ("agy", CLIAgent::Antigravity, true),
+            ("gemini", CLIAgent::Gemini, !cfg!(feature = "lean")),
+        ] {
+            let terminal = add_window_with_terminal(&mut app, None);
+            terminal.update(&mut app, |view, ctx| {
+                view.handle_cli_agent_notification(
+                    Some(CLI_AGENT_NOTIFICATION_SENTINEL),
+                    &format!(r#"{{"v":1,"agent":"{name}","event":"session_start"}}"#),
+                    ctx,
+                );
+            });
+
+            terminal.read(&app, |view, ctx| {
+                let registered = CLIAgentSessionsModel::as_ref(ctx)
+                    .session(view.view_id)
+                    .map(|session| session.agent);
+                assert_eq!(registered, registers.then_some(agent), "{name}");
+            });
+        }
+    });
+}
+
 #[test]
 fn active_cli_agent_ignores_non_tui_long_running_command() {
     App::test((), |mut app| async move {

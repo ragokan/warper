@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use chrono::Utc;
 use persistence::model::{ConversationUsageMetadata, PRIMARY_AGENT_CATEGORY};
+use warp_core::settings::Setting as _;
 use warp_multi_agent_api as api;
 use warpui::{App, SingletonEntity};
 
@@ -21,6 +22,7 @@ use crate::terminal::cli_agent_sessions::{
     CLIAgentInputEntrypoint, CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext,
     CLIAgentSessionStatus, CLIAgentSessionsModel,
 };
+use crate::terminal::session_settings::CLIAgentToolbarChipSelection;
 use crate::terminal::shared_session::{SharedSessionSource, SharedSessionStatus};
 use crate::test_util::add_window_with_terminal;
 use crate::test_util::billing_unit::{set_charge_unit, set_usage_display_unit};
@@ -159,6 +161,70 @@ fn claude_conversation_metadata(task_id: AmbientAgentTaskId) -> ServerAIConversa
         server_conversation_token: ServerConversationToken::new(CONVERSATION_TOKEN.to_string()),
         artifacts: vec![],
     }
+}
+
+/// Lean has no coding agents settings page or project explorer for these toolbar buttons to open.
+#[test]
+fn cli_footer_offers_settings_and_file_explorer_except_in_lean() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            start_cli_session(view, ctx);
+
+            let footer = view.input().as_ref(ctx).agent_input_footer().as_ref(ctx);
+            let settings_button_id = footer.settings_button.id();
+            let file_explorer_button_id = footer.file_explorer_button.id();
+            let child_ids = rendered_cli_footer_child_ids(view, ctx);
+            assert_eq!(
+                child_ids.contains(&settings_button_id),
+                !cfg!(feature = "lean"),
+                "settings: {child_ids:?}"
+            );
+            assert_eq!(
+                child_ids.contains(&file_explorer_button_id),
+                !cfg!(feature = "lean"),
+                "file explorer: {child_ids:?}"
+            );
+        });
+    });
+}
+
+/// Lean has no toolbar editor, so a stored custom layout does not empty its toolbar.
+#[test]
+fn stored_cli_toolbar_layout_applies_except_in_lean() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        SessionSettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings.cli_agent_footer_chip_selection.set_value(
+                CLIAgentToolbarChipSelection::Custom {
+                    left: vec![],
+                    right: vec![],
+                },
+                ctx,
+            );
+        });
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            start_cli_session(view, ctx);
+
+            let file_button_id = view
+                .input()
+                .as_ref(ctx)
+                .agent_input_footer()
+                .as_ref(ctx)
+                .file_button
+                .id();
+            let child_ids = rendered_cli_footer_child_ids(view, ctx);
+            assert_eq!(
+                child_ids.contains(&file_button_id),
+                cfg!(feature = "lean"),
+                "{child_ids:?}"
+            );
+        });
+    });
 }
 
 #[test]

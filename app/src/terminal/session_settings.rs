@@ -431,6 +431,18 @@ define_settings_group!(SessionSettings, settings: [
     },
 ]);
 
+impl SessionSettings {
+    /// The CLI agent toolbar layout. Lean has no toolbar editor, so it ignores a stored layout.
+    pub fn cli_agent_toolbar_chip_selection(&self) -> &CLIAgentToolbarChipSelection {
+        static LEAN_SELECTION: CLIAgentToolbarChipSelection = CLIAgentToolbarChipSelection::Default;
+        if cfg!(feature = "lean") {
+            &LEAN_SELECTION
+        } else {
+            &self.cli_agent_footer_chip_selection
+        }
+    }
+}
+
 settings::macros::implement_setting_for_enum!(
     WorkingDirectoryConfig,
     SessionSettings,

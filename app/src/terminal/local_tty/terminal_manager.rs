@@ -1256,7 +1256,7 @@ impl<S> TerminalManager<S> {
                     .all_chips()
                     .contains(&ContextChipKind::NodeVersion)
                 || settings
-                    .cli_agent_footer_chip_selection
+                    .cli_agent_toolbar_chip_selection()
                     .all_chips()
                     .contains(&ContextChipKind::NodeVersion)
         };

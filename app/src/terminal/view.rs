@@ -5264,7 +5264,7 @@ impl TerminalView {
         if self.has_active_cli_agent_session(ctx)
             && Self::uses_git_status_chips(
                 SessionSettings::as_ref(ctx)
-                    .cli_agent_footer_chip_selection
+                    .cli_agent_toolbar_chip_selection()
                     .all_chips(),
             )
         {
@@ -5301,7 +5301,7 @@ impl TerminalView {
         }
         if self.has_active_cli_agent_session(ctx)
             && SessionSettings::as_ref(ctx)
-                .cli_agent_footer_chip_selection
+                .cli_agent_toolbar_chip_selection()
                 .all_chips()
                 .contains(&ContextChipKind::GithubPullRequest)
         {
@@ -14271,14 +14271,11 @@ impl TerminalView {
         body: &str,
         ctx: &mut ViewContext<Self>,
     ) {
-        if cfg!(feature = "lean") {
-            return;
-        }
         let Some(notification) = parse_event(title, body) else {
             return;
         };
 
-        if !is_agent_supported(&notification.agent) {
+        if !is_agent_supported(&notification.agent) || !notification.agent.is_enabled_in_build() {
             return;
         }
 
@@ -14437,7 +14434,7 @@ impl TerminalView {
         let ai_settings = AISettings::as_ref(ctx);
         if !*ai_settings.auto_open_rich_input_on_cli_agent_start
             || !ai_settings.is_any_ai_enabled(ctx)
-            || !*ai_settings.should_render_cli_agent_footer
+            || !ai_settings.cli_agent_toolbar_enabled()
             || !is_rich_input_chip_in_cli_toolbar(ctx)
         {
             return;
@@ -14536,7 +14533,7 @@ impl TerminalView {
         let ai_settings = AISettings::as_ref(ctx);
         if *ai_settings.auto_toggle_rich_input
             && ai_settings.is_any_ai_enabled(ctx)
-            && *ai_settings.should_render_cli_agent_footer
+            && ai_settings.cli_agent_toolbar_enabled()
             && is_rich_input_chip_in_cli_toolbar(ctx)
         {
             let should_auto_toggle_input = CLIAgentSessionsModel::as_ref(ctx)
@@ -29893,7 +29890,7 @@ impl View for TerminalView {
         if let Some(session) = CLIAgentSessionsModel::as_ref(app).session(self.view_id) {
             context.set.insert(init::CLI_AGENT_SESSION_ACTIVE_KEY);
             if session.agent.supports_cli_agent_footer()
-                && *AISettings::as_ref(app).should_render_cli_agent_footer
+                && AISettings::as_ref(app).cli_agent_toolbar_enabled()
             {
                 context.set.insert(flags::CLI_AGENT_FOOTER_ENABLED);
 
@@ -30416,7 +30413,7 @@ fn maybe_wrap_terminal_element_in_scrollable(
 /// Returns `true` when the Rich Input chip is present in the user's CLI agent
 /// footer toolbar configuration.
 fn is_rich_input_chip_in_cli_toolbar(app: &AppContext) -> bool {
-    let sel = &SessionSettings::as_ref(app).cli_agent_footer_chip_selection;
+    let sel = SessionSettings::as_ref(app).cli_agent_toolbar_chip_selection();
     sel.left_items()
         .iter()
         .chain(sel.right_items().iter())

@@ -2375,6 +2375,11 @@ impl AISettings {
         self.is_active_ai_enabled(app) && *self.intelligent_autosuggestions_enabled_internal
     }
 
+    /// Whether CLI agents get their toolbar. Lean has no setting for it and always shows it.
+    pub fn cli_agent_toolbar_enabled(&self) -> bool {
+        cfg!(feature = "lean") || *self.should_render_cli_agent_footer
+    }
+
     pub fn is_voice_input_enabled(&self, app: &warpui::AppContext) -> bool {
         // Voice input is conditionally-compiled because it requires additional dependencies on some platforms.
         cfg!(feature = "voice_input")

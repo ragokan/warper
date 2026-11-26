@@ -303,20 +303,23 @@ impl TerminalView {
         model: &TerminalModel,
         app: &AppContext,
     ) -> bool {
-        if cfg!(feature = "lean") {
+        let ai_settings = AISettings::as_ref(app);
+        let cli_agent = CLIAgentSessionsModel::as_ref(app)
+            .session(self.view_id)
+            .map(|s| s.agent);
+
+        // Lean shows only the toolbar of the CLI agents it integrates: no warpify or "Use agent"
+        // footer.
+        if cfg!(feature = "lean") && !cli_agent.is_some_and(CLIAgent::is_enabled_in_build) {
             return false;
         }
-        let ai_settings = AISettings::as_ref(app);
 
         // If the warpify footer is active, a subshell was detected and we should show the footer.
-        if self.use_agent_footer.as_ref(app).is_warpify_active(app) {
+        if !cfg!(feature = "lean") && self.use_agent_footer.as_ref(app).is_warpify_active(app) {
             return true;
         }
 
         let active_block = model.block_list().active_block();
-        let cli_agent = CLIAgentSessionsModel::as_ref(app)
-            .session(self.view_id)
-            .map(|s| s.agent);
 
         // Check the appropriate setting based on whether this is a CLI agent command.
         if let Some(cli_agent) = cli_agent {
@@ -326,7 +329,7 @@ impl TerminalView {
             // For CLI agent commands, only check the CLI agent footer setting.
             // This is independent of the global AI toggle so that users who
             // disable Warp AI still get the footer for third-party coding agents.
-            if !*ai_settings.should_render_cli_agent_footer {
+            if !ai_settings.cli_agent_toolbar_enabled() {
                 return false;
             }
 
@@ -374,9 +377,6 @@ impl TerminalView {
         model: &TerminalModel,
         ctx: &AppContext,
     ) -> Option<(CLIAgent, Option<String>)> {
-        if cfg!(feature = "lean") {
-            return None;
-        }
         let active_block = model.block_list().active_block();
 
         if !active_block.is_active_and_long_running() {
@@ -398,13 +398,15 @@ impl TerminalView {
         });
 
         if let Some(agent) = detected {
-            return Some((agent, None));
+            return agent.is_enabled_in_build().then_some((agent, None));
         }
 
-        CompiledCommandsForCodingAgentToolbar::matched_agent(ctx, &command).map(|agent| {
-            let prefix = command.split_whitespace().next().map(str::to_owned);
-            (agent, prefix)
-        })
+        CompiledCommandsForCodingAgentToolbar::matched_agent(ctx, &command)
+            .filter(|agent| agent.is_enabled_in_build())
+            .map(|agent| {
+                let prefix = command.split_whitespace().next().map(str::to_owned);
+                (agent, prefix)
+            })
     }
 
     /// Returns whether the active long-running command in this terminal is
@@ -1233,7 +1235,7 @@ impl UseAgentToolbar {
             if event.terminal_view_id() != terminal_view_id {
                 return;
             }
-            me.notify_and_notify_children(ctx);
+            me.notify_self_and_children(ctx);
         });
 
         Self {
@@ -1312,9 +1314,19 @@ impl UseAgentToolbar {
     }
 
     pub(in crate::terminal) fn notify_and_notify_children(&mut self, ctx: &mut ViewContext<Self>) {
-        if cfg!(feature = "lean") {
+        // Lean renders the toolbar only for the CLI agents it integrates, so other panes skip these
+        // per-wakeup repaints.
+        if cfg!(feature = "lean")
+            && !self
+                .cli_agent(ctx)
+                .is_some_and(CLIAgent::is_enabled_in_build)
+        {
             return;
         }
+        self.notify_self_and_children(ctx);
+    }
+
+    fn notify_self_and_children(&mut self, ctx: &mut ViewContext<Self>) {
         ctx.notify();
         self.agent_input_footer.update(ctx, |_, ctx| ctx.notify());
         self.warpify_footer_view.update(ctx, |_, ctx| ctx.notify());
@@ -1407,8 +1419,16 @@ impl View for UseAgentToolbar {
     }
 
     fn render(&self, app: &AppContext) -> Box<dyn Element> {
+        if cfg!(feature = "lean")
+            && !self
+                .cli_agent(app)
+                .is_some_and(CLIAgent::is_enabled_in_build)
+        {
+            return Empty::new().finish();
+        }
+
         // If the warpify footer is active, delegate rendering to the warpify footer view.
-        if self.warpify_footer_view.as_ref(app).is_active() {
+        if !cfg!(feature = "lean") && self.warpify_footer_view.as_ref(app).is_active() {
             return ChildView::new(&self.warpify_footer_view).finish();
         }
 

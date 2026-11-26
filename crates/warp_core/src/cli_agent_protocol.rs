@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_with::skip_serializing_none;
 
+use crate::features::FeatureFlag;
+
 /// Sentinel title that identifies structured CLI-agent events sent via OSC 777.
 pub const CLI_AGENT_NOTIFICATION_SENTINEL: &str = "warp://cli-agent";
 
@@ -12,6 +14,13 @@ pub const WARP_CLI_AGENT_PROTOCOL_VERSION_ENV: &str = "WARP_CLI_AGENT_PROTOCOL_V
 
 /// Environment variable that identifies the hosting Warp client version.
 pub const WARP_CLIENT_VERSION_ENV: &str = "WARP_CLIENT_VERSION";
+
+/// Whether new shells advertise [`WARP_CLI_AGENT_PROTOCOL_VERSION_ENV`]. CLI-agent plugins send
+/// structured notifications only when it is set; without them they fall back to legacy
+/// notifications. Lean handles the structured notifications of the agents it integrates.
+pub fn should_advertise_protocol_version() -> bool {
+    FeatureFlag::HOANotifications.is_enabled() || warpui_core::lean::IS_LEAN
+}
 
 /// Wire representation of a structured CLI-agent notification.
 #[skip_serializing_none]

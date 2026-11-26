@@ -211,6 +211,33 @@ impl CLIAgent {
         }
     }
 
+    /// Whether this build detects the agent, shows its toolbar and handles its structured
+    /// notifications. The lean build integrates only the agents its users run.
+    pub fn is_enabled_in_build(self) -> bool {
+        if !cfg!(feature = "lean") {
+            return true;
+        }
+        match self {
+            CLIAgent::Claude | CLIAgent::Codex | CLIAgent::OpenCode | CLIAgent::Antigravity => true,
+            CLIAgent::Gemini
+            | CLIAgent::Amp
+            | CLIAgent::Droid
+            | CLIAgent::Copilot
+            | CLIAgent::Pi
+            | CLIAgent::OhMyPi
+            | CLIAgent::Auggie
+            | CLIAgent::CursorCli
+            | CLIAgent::Goose
+            | CLIAgent::Hermes
+            | CLIAgent::Vibe
+            | CLIAgent::Grok
+            | CLIAgent::Kiro
+            | CLIAgent::Muse
+            | CLIAgent::WarpTui
+            | CLIAgent::Unknown => false,
+        }
+    }
+
     /// Command prefixes that identify this CLI agent.
     pub(crate) fn command_prefixes(&self) -> &'static [&'static str] {
         match self {

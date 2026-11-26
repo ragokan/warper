@@ -560,6 +560,18 @@ fn test_chips_to_run_only_includes_active_surface_configurations() {
         app.read(|ctx| {
             let current_prompt = current_prompt.as_ref(ctx);
             let chips_for = |surfaces| current_prompt.chips_to_run_for_surfaces(surfaces, ctx);
+            // Lean ignores the stored CLI agent toolbar layout.
+            let cli_chips = if cfg!(feature = "lean") {
+                CLIAgentToolbarChipSelection::Default.all_chips()
+            } else {
+                vec![ContextChipKind::ShellGitBranch]
+            };
+            let mut all_chips = vec![ContextChipKind::Username, ContextChipKind::WorkingDirectory];
+            for chip in &cli_chips {
+                if !all_chips.contains(chip) {
+                    all_chips.push(chip.clone());
+                }
+            }
 
             assert!(chips_for(ActiveChipSurfaces::default()).is_empty());
             assert_eq!(
@@ -581,7 +593,7 @@ fn test_chips_to_run_only_includes_active_surface_configurations() {
                     cli_agent_footer: true,
                     ..Default::default()
                 }),
-                vec![ContextChipKind::ShellGitBranch]
+                cli_chips
             );
             assert_eq!(
                 chips_for(ActiveChipSurfaces {
@@ -589,11 +601,7 @@ fn test_chips_to_run_only_includes_active_surface_configurations() {
                     agent_footer: true,
                     cli_agent_footer: true,
                 }),
-                vec![
-                    ContextChipKind::Username,
-                    ContextChipKind::WorkingDirectory,
-                    ContextChipKind::ShellGitBranch,
-                ]
+                all_chips
             );
         });
     });
@@ -678,7 +686,8 @@ fn test_cli_agent_footer_chips_require_a_visible_supported_footer() {
                 .set_value(false, ctx)
                 .unwrap();
         });
-        assert!(cli_footer_chips(&app).is_empty());
+        // Lean has no setting for the CLI agent toolbar.
+        assert_eq!(cli_footer_chips(&app).is_empty(), !cfg!(feature = "lean"));
     });
 }
 

@@ -393,6 +393,113 @@ fn cli_agent_footer_renders_for_viewer_of_shared_cloud_agent_session() {
     })
 }
 
+/// Lean shows the CLI agent toolbar only for the agents it integrates.
+#[test]
+fn cli_agent_toolbar_renders_for_integrated_agents() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            simulate_user_started_long_running_command(view);
+
+            for (agent, renders) in [
+                (CLIAgent::Claude, true),
+                (CLIAgent::Codex, true),
+                (CLIAgent::OpenCode, true),
+                (CLIAgent::Antigravity, true),
+                (CLIAgent::Gemini, !cfg!(feature = "lean")),
+            ] {
+                CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                    sessions.set_session(
+                        view.id(),
+                        CLIAgentSession {
+                            agent,
+                            status: CLIAgentSessionStatus::InProgress,
+                            session_context: CLIAgentSessionContext::default(),
+                            input_state: CLIAgentInputState::Closed,
+                            listener: None,
+                            plugin_version: None,
+                            remote_host: None,
+                            draft_text: None,
+                            custom_command_prefix: None,
+                            received_rich_notification: false,
+                            should_auto_toggle_input: false,
+                        },
+                        ctx,
+                    );
+                });
+
+                {
+                    let model = view.model.lock();
+                    assert_eq!(
+                        view.should_render_use_agent_footer(&model, ctx),
+                        renders,
+                        "{agent:?}"
+                    );
+                }
+                let agent_input_footer_id =
+                    view.use_agent_footer.as_ref(ctx).agent_input_footer.id();
+                let rendered_child_ids = view
+                    .use_agent_footer
+                    .as_ref(ctx)
+                    .render(ctx)
+                    .debug_child_view_ids();
+                assert_eq!(
+                    rendered_child_ids.contains(&agent_input_footer_id),
+                    renders,
+                    "{agent:?}"
+                );
+            }
+        });
+    })
+}
+
+/// Lean has no setting for the CLI agent toolbar, so a stored "off" does not hide it there.
+#[test]
+fn stored_cli_agent_toolbar_setting_applies_except_in_lean() {
+    App::test((), |mut app| async move {
+        initialize_app_for_terminal_view(&mut app);
+        AISettings::handle(&app).update(&mut app, |settings, ctx| {
+            let _ = settings
+                .should_render_cli_agent_footer
+                .set_value(false, ctx);
+        });
+
+        let terminal = add_window_with_terminal(&mut app, None);
+
+        terminal.update(&mut app, |view, ctx| {
+            simulate_user_started_long_running_command(view);
+            CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                sessions.set_session(
+                    view.id(),
+                    CLIAgentSession {
+                        agent: CLIAgent::Claude,
+                        status: CLIAgentSessionStatus::InProgress,
+                        session_context: CLIAgentSessionContext::default(),
+                        input_state: CLIAgentInputState::Closed,
+                        listener: None,
+                        plugin_version: None,
+                        remote_host: None,
+                        draft_text: None,
+                        custom_command_prefix: None,
+                        received_rich_notification: false,
+                        should_auto_toggle_input: false,
+                    },
+                    ctx,
+                );
+            });
+
+            let model = view.model.lock();
+            assert_eq!(
+                view.should_render_use_agent_footer(&model, ctx),
+                cfg!(feature = "lean")
+            );
+        });
+    })
+}
+
 #[test]
 fn cli_agent_footer_does_not_render_for_warp_tui_session() {
     App::test((), |mut app| async move {

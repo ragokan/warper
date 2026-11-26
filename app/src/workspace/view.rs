@@ -23738,7 +23738,7 @@ impl Workspace {
                 .set
                 .insert(flags::SHOW_BASE_MODEL_PICKER_IN_PROMPT_FLAG);
         }
-        if *ai_settings.should_render_cli_agent_footer.value() {
+        if ai_settings.cli_agent_toolbar_enabled() {
             context.set.insert(flags::CLI_AGENT_FOOTER_ENABLED);
         }
         if *ai_settings.auto_toggle_rich_input.value() {

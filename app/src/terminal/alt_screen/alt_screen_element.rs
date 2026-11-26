@@ -18,8 +18,8 @@ use warpui::text::SelectionType;
 use warpui::units::{IntoLines, IntoPixels, Lines, Pixels};
 use warpui::{
     AfterLayoutContext, AppContext, ClipBounds, Element, EntityId, Event, EventContext,
-    LayoutContext, ModelHandle, PaintContext, SizeConstraint, end_trace, record_trace_event,
-    start_trace,
+    LayoutContext, ModelHandle, PaintContext, SingletonEntity as _, SizeConstraint, end_trace,
+    record_trace_event, start_trace,
 };
 
 use super::should_intercept_mouse;
@@ -27,6 +27,7 @@ use crate::appearance::Appearance;
 use crate::pane_group::SplitPaneState;
 use crate::settings::EnforceMinimumContrast;
 use crate::terminal::blockgrid_renderer::GridRenderParams;
+use crate::terminal::cli_agent_sessions::CLIAgentSessionsModel;
 use crate::terminal::find::TerminalFindModel;
 use crate::terminal::grid_renderer::CellGlyphCache;
 use crate::terminal::meta_shortcuts::handle_keystroke_despite_composing;
@@ -719,6 +720,11 @@ impl Element for AltScreenElement {
 
         let mut sampler = model.alt_screen().bg_color_sampler.lock();
         sampler.reset();
+        // Lean's only consumer of the sampled background is the CLI agent toolbar.
+        let samples_background = !cfg!(feature = "lean")
+            || CLIAgentSessionsModel::as_ref(app)
+                .session(self.terminal_view_id)
+                .is_some_and(|session| session.agent.is_enabled_in_build());
 
         // Render grid cells. Since the alt screen has no scrollback we can always start at index 0.
         record_trace_event!("alt_screen_element:paint:preparing_to_render_grid");
@@ -758,7 +764,7 @@ impl Element for AltScreenElement {
             cursor_visible.then(|| model.alt_screen().cursor_style().shape),
             RespectDisplayedOutput::Yes,
             &model.image_id_to_metadata,
-            (!cfg!(feature = "lean")).then_some(&mut *sampler),
+            samples_background.then_some(&mut *sampler),
             self.grid_render_params.hide_cursor_cell,
             ctx,
             app,
@@ -1042,12 +1048,86 @@ mod tests {
     use warpui::{App, EntityIdSet, Presenter, SingletonEntity, WindowInvalidation};
 
     use super::*;
+    use crate::terminal::CLIAgent;
     use crate::terminal::alt_screen_reporting::AltScreenReporting;
+    use crate::terminal::cli_agent_sessions::{
+        CLIAgentInputState, CLIAgentSession, CLIAgentSessionContext, CLIAgentSessionStatus,
+    };
     use crate::terminal::model::ansi::{Handler as _, Mode};
     use crate::terminal::view::Event as TerminalEvent;
     use crate::test_util::terminal::{
         add_window_with_id_and_terminal, initialize_app_for_terminal_view,
     };
+
+    /// Lean samples the alt-screen background only while the CLI agent toolbar can use it.
+    #[test]
+    fn background_is_sampled_for_cli_agent_toolbar() {
+        App::test((), |mut app| async move {
+            initialize_app_for_terminal_view(&mut app);
+            let (window_id, terminal) = add_window_with_id_and_terminal(&mut app, None);
+            let size = terminal.update(&mut app, |view, _| {
+                let mut model = view.model.lock();
+                model.set_mode(Mode::SwapScreen {
+                    save_cursor_and_clear_screen: true,
+                });
+                model.process_bytes("\x1b[44m\x1b[2J");
+                *view.size_info()
+            });
+            let presenter = Rc::new(RefCell::new(Presenter::new(window_id)));
+
+            for agent in [None, Some(CLIAgent::Claude)] {
+                if let Some(agent) = agent {
+                    terminal.update(&mut app, |view, ctx| {
+                        CLIAgentSessionsModel::handle(ctx).update(ctx, |sessions, ctx| {
+                            sessions.set_session(
+                                view.id(),
+                                CLIAgentSession {
+                                    agent,
+                                    status: CLIAgentSessionStatus::InProgress,
+                                    session_context: CLIAgentSessionContext::default(),
+                                    input_state: CLIAgentInputState::Closed,
+                                    listener: None,
+                                    plugin_version: None,
+                                    remote_host: None,
+                                    draft_text: None,
+                                    custom_command_prefix: None,
+                                    received_rich_notification: false,
+                                    should_auto_toggle_input: false,
+                                },
+                                ctx,
+                            );
+                        });
+                    });
+                }
+                let mut updated = EntityIdSet::default();
+                updated.insert(app.root_view_id(window_id).unwrap());
+                app.update(|ctx| {
+                    presenter.borrow_mut().invalidate(
+                        WindowInvalidation {
+                            updated,
+                            ..Default::default()
+                        },
+                        ctx,
+                    );
+                    presenter.borrow_mut().build_scene(
+                        vec2f(size.pane_width_px, size.pane_height_px),
+                        1.,
+                        None,
+                        ctx,
+                    );
+                });
+
+                let sampled = terminal.read(&app, |view, _| {
+                    view.model.lock().alt_screen().inferred_bg_color().is_some()
+                });
+                assert_eq!(
+                    sampled,
+                    agent.is_some() || !cfg!(feature = "lean"),
+                    "{agent:?}"
+                );
+            }
+        })
+    }
 
     #[test]
     fn hover_reports_respect_mouse_reporting_and_sgr() {

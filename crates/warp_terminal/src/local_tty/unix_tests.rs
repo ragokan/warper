@@ -1,3 +1,5 @@
+use warp_core::features::FeatureFlag;
+
 use super::*;
 
 fn shell_starter(shell_type: ShellType, shell_path: &str) -> DirectShellStarter {
@@ -61,6 +63,27 @@ fn host_non_bash_command_does_not_set_history_size_sentinels() {
     assert_eq!(env_value(&command, "HISTSIZE"), None);
     assert_eq!(env_value(&command, "WARP_INITIAL_HISTFILESIZE"), None);
     assert_eq!(env_value(&command, "WARP_INITIAL_HISTSIZE"), None);
+}
+
+#[test]
+fn host_command_advertises_cli_agent_protocol_in_lean_without_notifications_flag() {
+    let _guard = FeatureFlag::HOANotifications.override_enabled(false);
+    let command = build_host_shell_command(
+        shell_starter(ShellType::Zsh, "/bin/zsh"),
+        None,
+        HashMap::new(),
+        None,
+        false,
+        false,
+        false,
+        false,
+        true,
+    );
+
+    assert_eq!(
+        env_value(&command, WARP_CLI_AGENT_PROTOCOL_VERSION_ENV),
+        warpui_core::lean::IS_LEAN.then(|| Some(CLI_AGENT_PROTOCOL_VERSION.to_string()))
+    );
 }
 
 #[test]

@@ -1685,18 +1685,19 @@ impl DisplayChip {
         );
 
         // Code review is only supported on local sessions and
-        // on remote sessions with a connected host ID.
-        let supports_code_review = self
-            .session_context
-            .as_ref()
-            .map(|ctx| match ctx.session.session_type() {
-                SessionType::Local => true,
-                SessionType::WarpifiedRemote { host_id: Some(_) } => {
-                    FeatureFlag::RemoteCodeReview.is_enabled()
-                }
-                SessionType::WarpifiedRemote { host_id: None } => false,
-            })
-            .unwrap_or(false);
+        // on remote sessions with a connected host ID. Lean has no code review pane.
+        let supports_code_review = !cfg!(feature = "lean")
+            && self
+                .session_context
+                .as_ref()
+                .map(|ctx| match ctx.session.session_type() {
+                    SessionType::Local => true,
+                    SessionType::WarpifiedRemote { host_id: Some(_) } => {
+                        FeatureFlag::RemoteCodeReview.is_enabled()
+                    }
+                    SessionType::WarpifiedRemote { host_id: None } => false,
+                })
+                .unwrap_or(false);
 
         let diff_stats_display = if supports_code_review {
             // Get the keybinding for the tooltip

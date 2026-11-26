@@ -9,6 +9,7 @@ fn lean_keeps_terminal_features_and_pins_services_off() {
         FeatureFlag::NativeShellCompletions,
         FeatureFlag::Ligatures,
         FeatureFlag::PluggableNotifications,
+        FeatureFlag::CodexPlugin,
     ] {
         assert!(features.contains(&flag), "{flag:?}");
     }

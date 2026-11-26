@@ -6,8 +6,8 @@ use itertools::Itertools;
 use warp_core::channel::ChannelState;
 use warp_core::cli_agent_protocol::{
     CLI_AGENT_PROTOCOL_VERSION, WARP_CLI_AGENT_PROTOCOL_VERSION_ENV, WARP_CLIENT_VERSION_ENV,
+    should_advertise_protocol_version,
 };
-use warp_core::features::FeatureFlag;
 use warp_core::safe_info;
 use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::core::{HSTRING, PCWSTR};
@@ -135,7 +135,7 @@ pub(super) fn get_shell_environment_variables(options: &PtyOptions) -> Vec<u16> 
         },
     );
 
-    if FeatureFlag::HOANotifications.is_enabled() {
+    if should_advertise_protocol_version() {
         env.insert(
             map_key(WARP_CLI_AGENT_PROTOCOL_VERSION_ENV.into()),
             EnvEntry {
@@ -229,7 +229,7 @@ fn wsl_env_allowlist(include_initial_working_dir: bool) -> OsString {
         format!("{PROMPT_NODE_VERSION_ENABLED_NAME}/u"),
     ];
 
-    if FeatureFlag::HOANotifications.is_enabled() {
+    if should_advertise_protocol_version() {
         entries.push(format!("{WARP_CLI_AGENT_PROTOCOL_VERSION_ENV}/u"));
     }
 

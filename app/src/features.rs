@@ -574,6 +574,7 @@ fn is_allowed_in_lean(flag: FeatureFlag) -> bool {
             | FeatureFlag::ForceClassicCompletions
             | FeatureFlag::NativeShellCompletions
             | FeatureFlag::PluggableNotifications
+            | FeatureFlag::CodexPlugin
             | FeatureFlag::AsyncFind
             | FeatureFlag::NewTabStyling
             | FeatureFlag::KittyKeyboardProtocol

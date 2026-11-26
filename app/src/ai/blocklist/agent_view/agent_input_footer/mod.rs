@@ -1629,7 +1629,10 @@ impl AgentInputFooter {
                 };
                 Some(ChildView::new(button).finish())
             }
-            AgentToolbarItemKind::Settings => Some(ChildView::new(&self.settings_button).finish()),
+            // Lean has no coding agents settings page.
+            AgentToolbarItemKind::Settings => {
+                (!cfg!(feature = "lean")).then(|| ChildView::new(&self.settings_button).finish())
+            }
             // Handled by the available_in() guard above; included for exhaustiveness.
             AgentToolbarItemKind::ModelSelector
             | AgentToolbarItemKind::NLDToggle
@@ -1700,10 +1703,10 @@ impl AgentInputFooter {
 
         let session_settings = SessionSettings::as_ref(app);
         let left_items = session_settings
-            .cli_agent_footer_chip_selection
+            .cli_agent_toolbar_chip_selection()
             .left_items();
         let right_items = session_settings
-            .cli_agent_footer_chip_selection
+            .cli_agent_toolbar_chip_selection()
             .right_items();
 
         let mut left_buttons = Wrap::row()

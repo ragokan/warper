@@ -1128,7 +1128,7 @@ impl CurrentPrompt {
                 .and_then(|controller| controller.upgrade(ctx))
                 .is_some_and(|controller| controller.as_ref(ctx).is_active());
         let cli_agent_footer = self.terminal_view_id.is_some_and(|terminal_view_id| {
-            *AISettings::as_ref(ctx).should_render_cli_agent_footer
+            AISettings::as_ref(ctx).cli_agent_toolbar_enabled()
                 && CLIAgentSessionsModel::as_ref(ctx)
                     .session(terminal_view_id)
                     .is_some_and(|session| session.agent.supports_cli_agent_footer())
@@ -1171,7 +1171,7 @@ impl CurrentPrompt {
         if surfaces.cli_agent_footer {
             extend_unique(
                 SessionSettings::as_ref(ctx)
-                    .cli_agent_footer_chip_selection
+                    .cli_agent_toolbar_chip_selection()
                     .all_chips(),
             );
         }

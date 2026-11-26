@@ -197,7 +197,7 @@ impl AgentToolbarItemKind {
             // `Workspace::compute_left_panel_views` and the `SHOW_PROJECT_EXPLORER`
             // keybinding predicate.
             Self::FileExplorer => {
-                cfg!(feature = "local_fs") && *CodeSettings::as_ref(app).show_project_explorer
+                cfg!(feature = "local_fs") && CodeSettings::as_ref(app).project_explorer_enabled()
             }
             _ => true,
         }
