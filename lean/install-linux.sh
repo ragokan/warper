@@ -24,7 +24,7 @@ else
 fi
 install -m 644 "$repo/LICENSE-MIT" "$repo/LICENSE-AGPL" "$app/resources/"
 "$app/warp-oss" dump-settings-schema "$app/resources/settings_schema.json"
-install -m 644 "$repo/app/channels/oss/icon/no-padding/512x512.png" \
+install -m 644 "$repo/lean/warper-icon.png" \
     "$data/icons/hicolor/512x512/apps/dev.warp.WarpOss.png"
 ln -sfn "$app/warp-oss" "$prefix/bin/warper"
 if [[ -L $prefix/bin/warp-lean ]]; then

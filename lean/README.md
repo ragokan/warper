@@ -4,7 +4,9 @@ A terminal-focused, **fully offline** `warp-oss` build from branch `lean`. It ne
 never contacts Warp's servers and takes its settings only from the local `settings.toml`. Stable
 Warp's files are read only. `master` stays at upstream; nothing is pushed by this tooling.
 
-Display name: **Warper**; app IDs, data directories, URL scheme and icons are unchanged.
+Display name: **Warper**; app IDs, data directories and URL scheme are unchanged. The app icon is
+Warp's black-on-white Cow icon (`app/DockTilePlugin/Resources/cow.png`; `lean/warper-icon.png` is
+its 512 px copy for Linux), so the Dock, Finder, launchers and desktop notifications all show it.
 Releases use `warper-macos-arm64.zip` / `.dmg` and `warper-linux-arm64.tar.gz` (`warper` binary).
 The installer preserves `warp-oss.lean-v0.1.0` for rollback.
 
@@ -60,7 +62,7 @@ lean/install-linux.sh
 ```
 
 The installer puts the binary in `~/.local/lib/warp-lean/warp-oss`, adds
-`~/.local/bin/warper`, installs the OSS icon and a desktop launcher, generates the settings
+`~/.local/bin/warper`, installs the Warper icon and a desktop launcher, generates the settings
 schema beside the executable, and registers `warposs://` for opening tabs, windows and settings.
 Terminal fonts, shell bootstrap and normal UI assets are embedded by the upstream release asset
 provider. No Oz skills or remote-server binaries are installed.
@@ -134,6 +136,26 @@ links use the selected external editor, `$EDITOR`, or the system default. Plain 
 blocks, Find, copy and syntax highlighting remain. The “Show Warp network log” binding
 (`input:insert_network_logging_workflow`) is hidden with Workflows; the Privacy-page viewer stays.
 
+## Coding agents
+
+Warper recognizes four coding-agent CLIs: Claude Code (`claude`), Codex (`codex`), OpenCode
+(`opencode`) and Antigravity (`agy`, `antigravity`), also through shell aliases. While one runs
+as a long-running command, the pane shows the agent's toolbar: its logo, Attach File, the diff
+stats, working directory and git branch. Shells advertise `WARP_CLI_AGENT_PROTOCOL_VERSION`, so
+the agents' Warp plugins (or agents that emit the protocol natively, like Antigravity) send
+structured events: the pane tracks the agent's status, and a desktop notification is sent when it
+finishes or needs input while you are in another window (Settings → Features → notifications).
+The toolbar is always on and uses the default layout; stored `agents.third_party.*` toolbar
+settings are kept but ignored.
+Codex without its plugin reports completion through its OSC 9 notification. Install the plugins
+yourself; Warper has no plugin installer.
+
+Not included: the rich-input composer, voice input, the in-app notification inbox, plugin install
+chips, the coding agents settings page, custom toolbar commands, sharing/remote control, and the
+file explorer and code review panes. Other agents (Gemini, Amp, Copilot, …) run as plain commands,
+and their structured notifications are dropped; since shells now advertise the protocol, their
+plugins may no longer fall back to legacy notifications.
+
 ## Avatar
 
 The round button at the top right opens the avatar menu. It shows the Yoda image built into
@@ -201,7 +223,7 @@ fixes listed below also apply to default builds.
 | `crates/settings/src/registration.rs`, `crates/warpui_extras/src/user_preferences/toml_backed.rs` | Excludes hidden settings from registration and prevents writes/deletes without changing the loaded document. |
 | `app/src/root_view.rs` | Uses the display-name helper for transferred-tab window titles. |
 | `crates/warpui_core/src/async/native/executor.rs` | Caps the shared background executor at four workers. |
-| `app/src/features.rs` | Final terminal allowlist removes AI, MCP, Oz, cloud agents, sharing, recording, update, changelog and telemetry flags. Existing user-preference precedence pins exclusions off even if server experiments call `set_enabled`. Runtime feature menu is also disabled. |
+| `app/src/features.rs`, `lean/build.sh` | Final terminal allowlist removes AI, MCP, Oz, cloud agents, sharing, recording, update, changelog and telemetry flags; it keeps `CodexPlugin` (structured Codex notifications). Existing user-preference precedence pins exclusions off even if server experiments call `set_enabled`. Runtime feature menu is also disabled. |
 | `app/src/settings/input.rs` | Keeps input-style schema copy terminal-focused; both stored styles still persist and sync. |
 | `app/src/settings/ai.rs` | Effective AI availability is always false, including after login; stored choices remain intact. |
 | `app/src/settings/privacy.rs` | Effective collection stays off; legacy privacy fetch/migration cannot overwrite stored or synced choices. Secret-regex initialization remains. |
@@ -229,18 +251,21 @@ fixes listed below also apply to default builds.
 | `app/src/settings_view/update_environment_form.rs` | Suppresses hidden cloud-environment GitHub discovery, including initialization and refocus triggers. |
 | `app/src/settings_view/privacy_page.rs` | Hides controls for unavailable telemetry, crash and cloud AI collection. |
 | `app/src/settings_view/appearance_page.rs` | Hides agent/notebook font, Drive and agent-tab options, including their palette toggles; the central widget filter also hides Project Explorer. |
-| `app/src/settings_view/features_page.rs` | Hides changelog and agent notification controls; retains command notifications. |
+| `app/src/settings_view/features_page.rs` | Hides the changelog control; keeps command and agent desktop-notification controls. |
 | `app/src/terminal/view/init.rs` | Disables unconditional latest-agent-message and save-to-Drive shortcut commands. |
 | `app/src/terminal/buy_credits_banner.rs` | Hides the AI-credit purchase banner, including the logged-in zero-credit state. |
-| `app/src/terminal/view/use_agent_footer/mod.rs` | No third-party CLI-agent detection/footer or hidden-child wakeup notifications; rich input is separately flag-disabled. |
+| `app/src/terminal/cli_agent.rs`, `app/src/terminal/view/use_agent_footer/mod.rs` | CLI-agent detection and the toolbar cover only Claude Code, Codex, OpenCode and Antigravity (`CLIAgent::is_enabled_in_build`); no warpify or "Use agent" footer, and per-wakeup toolbar repaints only while one of those agents runs. Rich input stays flag-disabled. |
+| `app/src/ai/blocklist/agent_view/agent_input_footer/{mod,toolbar_item}.rs`, `app/src/context_chips/display_chip.rs` | The CLI-agent toolbar has no settings button (lean has no coding agents settings page) and no file explorer button (the project explorer is hidden), and its diff-stats chip does not open the code review pane lean lacks. |
+| `app/src/settings/ai.rs`, `app/src/terminal/session_settings.rs`, their readers in `app/src/terminal/{view,view/use_agent_footer/mod,local_tty/terminal_manager}.rs`, `app/src/context_chips/{current_prompt,prompt_type}.rs`, `app/src/workspace/view.rs` | `AISettings::cli_agent_toolbar_enabled` and `SessionSettings::cli_agent_toolbar_chip_selection`: lean always shows the CLI-agent toolbar with the default layout, since the hidden `agents.third_party.*` settings that would turn it off or rearrange it have no UI there (an upstream-era stored `false` or empty layout otherwise hides it for good). |
+| `crates/warp_core/src/cli_agent_protocol.rs`, `crates/warp_terminal/src/local_tty/{unix,windows/environment}.rs` | New shells get `WARP_CLI_AGENT_PROTOCOL_VERSION` without `HOANotifications`, so CLI-agent plugins send the structured notifications lean handles. |
 | `app/src/workspace/mod.rs` | Disables hidden settings/Drive search shortcuts and macOS Oz install actions. |
 | `app/src/terminal/universal_developer_input.rs` | Hides the AI mode/context/model toolbar while keeping the normal command editor and saved input style. |
 | `app/src/workspace/view.rs` | Hides and disables the legacy AI assistant fallback and removes changelog/billing/referral menu entries. |
 | `app/src/uri/mod.rs` | Ignores AI, cloud-agent, MCP, Drive, shared-session and auth deep links and the Account settings route; keeps normal terminal URLs. |
 | `app/src/changelog_model.rs` | Rejects every changelog request, including explicit actions. |
 | `app/src/app_services/linux/mod.rs` | Enables existing single-instance URL forwarding so a second launch hands its arguments to the running Warper. |
-| `app/src/terminal/view.rs` | Drops intercepted `warp://cli-agent` OSC 777 payloads without registering listeners. Lean Linux caps terminal wakeups at 30/s for software rendering; other builds keep 60/s. |
-| `app/src/terminal/alt_screen/alt_screen_element.rs` | Lean skips background-color sampling for its hidden footer consumers. |
+| `app/src/terminal/view.rs` | Handles intercepted `warp://cli-agent` OSC 777 payloads only from the integrated CLI agents and drops the rest. Lean Linux caps terminal wakeups at 30/s for software rendering; other builds keep 60/s. |
+| `app/src/terminal/alt_screen/alt_screen_element.rs` | Lean samples the alt-screen background color only while an integrated CLI agent's toolbar can use it. |
 | `app/src/editor/view/mod.rs`, `app/src/editor/view/mod_tests.rs` | Lean stops the editor cursor blink (and its redraw timer) after 30 s without an editor event; the next event restarts it. A window that is not the active one already stops the timer upstream; a test pins both. |
 | `app/src/lib.rs`, `app/src/settings/import/{model,view,model_tests}.rs`, `app/src/settings_view/{appearance_page,appearance_page_tests,mod,mod_tests}.rs`, `app/src/view_components/filterable_dropdown.rs` | Lean does not enumerate and load every system font at startup: the settings-import search (which needs the font list) starts when the import block is first added, and the Appearance page requests the list the first time its font dropdown is opened (selecting the page, as a restored background Settings tab does, only refreshes the dropdown's label; lean's default settings section is Appearance, since it has no Account page). A font list that arrives while the user is already searching keeps a match selected, so Enter works. The configured font and its fallbacks load on demand as before. On macOS the "Import External Settings" entry therefore stays listed until it is used (the block closes itself when nothing is found). |
 | `app/src/ai_assistant/panel.rs`, `app/src/ai_assistant/panel_tests.rs` | Lean does not start the AI assistant panel's 60 s refresh tick. Every window builds a panel that lean never shows, and the tick repainted the idle window once a minute. |
@@ -256,6 +281,7 @@ fixes listed below also apply to default builds.
 | `crates/watcher/src/lib.rs`, `crates/watcher/src/lib_tests.rs` | Ungated: a `BulkFilesystemWatcher` starts its background thread (and the debouncer thread, which wakes every quarter of the debounce duration) with its first path command instead of at construction, so watchers that never watch anything cost no threads. |
 | `crates/warp_logging/src/native.rs` | Ungated: the log file records milliseconds (it recorded whole seconds), so startup can be timed from the log. |
 | `app/build.rs` | Ungated: MetalKit is no longer linked; nothing uses it, and every linked framework is loaded before `main`. |
+| `lean/ci/bundle-macos.sh`, `lean/ci/bundle-linux.sh`, `lean/install-linux.sh`, `lean/warper-icon.png` | Packaging uses the Cow icon instead of the blue OSS icon. macOS desktop notifications show the bundle's `CFBundleIconFile`, not the custom Finder icon that the app-icon setting writes, so the bundle itself must carry it. |
 | `app/src/features_lean_tests.rs`, `app/src/lib_tests.rs`, `app/src/settings/{ai,privacy}_tests.rs`, `app/src/uri/uri_tests.rs`, `app/src/settings_view/update_environment_form_tests.rs` | Policy, startup, privacy and hidden network-fetch regression checks. |
 
 `lean/` owns the Dockerfile, build/install/sync scripts, tooling self-check, benchmark sampler,
@@ -273,10 +299,9 @@ The runtime allowlist also disables some non-AI, non-Drive release/experiment fl
 - `SelectablePrompt`: the experimental selectable command-prompt path stays off.
 - `VideoRecording` / `WindowsVideoRecording`: no built-in video recording.
 
-The opencode plugin's `OSC 777;notify;warp://cli-agent;<body>` is **dropped**: upstream intercepts
-the sentinel before ordinary notifications; lean returns before parsing/registering a listener.
-It is not converted into a desktop notification. Ordinary OSC 9/777 notifications are retained.
-No plugin changes or support code are included.
+Structured `OSC 777;notify;warp://cli-agent;<body>` notifications are handled for Claude Code,
+Codex, OpenCode and Antigravity (see "Coding agents") and dropped for every other agent; they are
+not converted into ordinary desktop notifications. Ordinary OSC 9/777 notifications are retained.
 
 The optional present-mode, flat-storage and reference-fork optimizations are omitted unless
 later measurements justify them. No GPU timing or storage/selection behavior changes are made.

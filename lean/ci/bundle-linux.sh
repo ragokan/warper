@@ -13,7 +13,7 @@ install -m755 "$binary" "$package/warper"
 install -m755 lean/warper-update "$package/warper-update"
 sed -e 's/^Name=.*/Name=Warper/' -e 's/^Exec=.*/Exec=warper %U/' \
   app/channels/oss/dev.warp.WarpOss.desktop > "$package/dev.warp.WarpOss.desktop"
-install -m644 app/channels/oss/icon/no-padding/512x512.png "$package/dev.warp.WarpOss.png"
+install -m644 lean/warper-icon.png "$package/dev.warp.WarpOss.png"
 cp LICENSE-AGPL LICENSE-MIT "$package/"
 # begin version
 tag="${GIT_RELEASE_TAG:-development}"
